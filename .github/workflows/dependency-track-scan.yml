@@ -12,6 +12,7 @@ name: CycloneDX SBOM + Dependency-Track scan (reusable)
 #     with:
 #       working-directory: app
 #       vault-secret-path: downops/data/<product>
+#       checkout-ref: ${{ github.event.pull_request.head.sha }}
 #     secrets:
 #       VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
 #
@@ -38,6 +39,11 @@ on:
         description: Vault KV path holding DT_URL / DT_API_KEY / DT_PROJECT_UUID (e.g. downops/data/wallettracker.backend).
         required: true
         type: string
+      checkout-ref:
+        description: Optional git ref to check out before scanning (e.g. the PR head SHA). Empty = the caller's ref.
+        required: false
+        type: string
+        default: ""
       syft-image:
         description: Syft container image used to generate the CycloneDX SBOM.
         required: false
@@ -81,6 +87,8 @@ jobs:
       bom-token: ${{ steps.sbom.outputs.bom-token }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout-ref }}
 
       - name: Fetch Dependency-Track secrets from Vault
         uses: hashicorp/vault-action@v4
