@@ -10,21 +10,26 @@ name: CycloneDX -> Dependency-Track scan (reusable)
 #
 # SBOM *generation* is intentionally NOT here: it is toolchain-specific and lives
 # in each product's own workflow. Python -> Syft, .NET -> cyclonedx-dotnet/dotnet
-# CycloneDX, Node -> cyclonedx-npm, etc. Each just uploads the result as an
-# artifact and calls this workflow with its name.
+# CycloneDX, Node -> cyclonedx-npm, etc.
 #
-#   # in the product workflow, after generating + uploading the SBOM artifact:
+# Dependency-Track target is parameterised so ONE workflow serves many projects:
+#   - dt-url          (input)  DT instance base URL
+#   - dt-project-uuid (input)  the DT project to upload the analysis to
+#   - DT_API_KEY      (secret) the API key for that project
+# If any of them is omitted, the values are read from Vault instead
+# (vault-secret-path -> DT_URL / DT_PROJECT_UUID / DT_API_KEY). Explicit values
+# always win over Vault, so a caller can override just the project id.
+#
 #   dependency-track:
 #     needs: [sbom]
 #     uses: noelnovo/.github/.github/workflows/dependency-track-scan.yml@main
 #     with:
 #       sbom-artifact-name: sbom
-#       vault-secret-path: downops/data/<product>
+#       dt-url: ${{ vars.DT_URL }}
+#       dt-project-uuid: ${{ vars.DT_PROJECT_UUID }}
 #     secrets:
-#       VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
-#
-# The Vault secret path must contain: DT_URL, DT_API_KEY, DT_PROJECT_UUID
-# (NVD_API_KEY optional).
+#       DT_API_KEY: ${{ secrets.DT_API_KEY }}
+#       # or reuse Vault: vault-secret-path + VAULT_TOKEN (see inputs)
 #
 # Cross-repo reusable workflows require this repository to be readable by the
 # caller's token, so it is public.
@@ -41,15 +46,26 @@ on:
         required: false
         type: string
         default: "bom.json"
+      dt-url:
+        description: Dependency-Track base URL (e.g. https://dt.downops.win). Overrides Vault when set.
+        required: false
+        type: string
+        default: ""
+      dt-project-uuid:
+        description: Dependency-Track project UUID to upload the analysis to. Overrides Vault when set.
+        required: false
+        type: string
+        default: ""
       vault-url:
-        description: HashiCorp Vault base URL.
+        description: HashiCorp Vault base URL (used only when reading DT settings from Vault).
         required: false
         type: string
         default: "https://vault.downops.win"
       vault-secret-path:
-        description: Vault KV path holding DT_URL / DT_API_KEY / DT_PROJECT_UUID (e.g. downops/data/wallettracker.backend).
-        required: true
+        description: Vault KV path holding DT_URL / DT_PROJECT_UUID / DT_API_KEY, used when the explicit inputs/secrets are not set.
+        required: false
         type: string
+        default: ""
       dt-analysis-timeout-attempts:
         description: Max polling attempts (x5s) while waiting for Dependency-Track to finish analysing the BOM.
         required: false
@@ -61,8 +77,12 @@ on:
         type: string
         default: "ubuntu-latest"
     secrets:
+      DT_API_KEY:
+        description: Dependency-Track API key for the target project. Overrides Vault when set.
+        required: false
       VAULT_TOKEN:
-        required: true
+        description: Vault token, used only when reading DT settings from Vault.
+        required: false
     outputs:
       bom-token:
         description: Dependency-Track BOM token for this upload.
@@ -82,16 +102,39 @@ jobs:
         with:
           name: ${{ inputs.sbom-artifact-name }}
 
-      - name: Fetch Dependency-Track secrets from Vault
+      - name: Fetch Dependency-Track settings from Vault (fallback)
+        if: ${{ inputs.vault-secret-path != '' }}
         uses: hashicorp/vault-action@v4
         with:
           url: ${{ inputs.vault-url }}
           token: ${{ secrets.VAULT_TOKEN }}
           secrets: |
             ${{ inputs.vault-secret-path }} DT_URL ;
-            ${{ inputs.vault-secret-path }} DT_API_KEY ;
             ${{ inputs.vault-secret-path }} DT_PROJECT_UUID ;
-            ${{ inputs.vault-secret-path }} NVD_API_KEY
+            ${{ inputs.vault-secret-path }} DT_API_KEY
+
+      - name: Resolve Dependency-Track settings
+        env:
+          IN_DT_URL: ${{ inputs.dt-url }}
+          IN_DT_PROJECT_UUID: ${{ inputs.dt-project-uuid }}
+          IN_DT_API_KEY: ${{ secrets.DT_API_KEY }}
+        run: |
+          # Explicit inputs/secrets win; otherwise fall back to the Vault values.
+          DT_URL="${IN_DT_URL:-$DT_URL}"
+          DT_PROJECT_UUID="${IN_DT_PROJECT_UUID:-$DT_PROJECT_UUID}"
+          DT_API_KEY="${IN_DT_API_KEY:-$DT_API_KEY}"
+          missing=""
+          [ -n "$DT_URL" ] || missing="$missing dt-url"
+          [ -n "$DT_PROJECT_UUID" ] || missing="$missing dt-project-uuid"
+          [ -n "$DT_API_KEY" ] || missing="$missing DT_API_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing Dependency-Track settings:$missing (pass them as inputs/secrets, or set vault-secret-path)"
+            exit 1
+          fi
+          echo "DT_URL=$DT_URL" >> "$GITHUB_ENV"
+          echo "DT_PROJECT_UUID=$DT_PROJECT_UUID" >> "$GITHUB_ENV"
+          echo "DT_API_KEY=$DT_API_KEY" >> "$GITHUB_ENV"
+          echo "Resolved DT target: url=$DT_URL project=$DT_PROJECT_UUID (api key: set)."
 
       - name: Validate CycloneDX SBOM
         run: |
