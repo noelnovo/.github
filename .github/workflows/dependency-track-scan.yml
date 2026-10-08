@@ -1,23 +1,30 @@
-name: CycloneDX SBOM + Dependency-Track scan (reusable)
+name: CycloneDX -> Dependency-Track scan (reusable)
 
-# Generic, cross-repo reusable workflow.
+# Generic, toolchain-agnostic reusable workflow.
 #
-# Called by a product's own workflow BEFORE it runs the SonarQube quality gate,
-# so the Dependency-Track analysis is complete when Sonar's dependency-track
-# plugin proxies the live findings.
+# It does ONE thing: take an already-generated CycloneDX SBOM (delivered as a
+# workflow artifact by the caller), push it to OWASP Dependency-Track, and wait
+# until DT finishes analysing it. The caller then runs the SonarQube quality gate
+# afterwards, because SonarQube's dependency-track plugin proxies the live DT
+# findings at scan time.
 #
-#   security-scan:
-#     needs: [python-tests]
+# SBOM *generation* is intentionally NOT here: it is toolchain-specific and lives
+# in each product's own workflow. Python -> Syft, .NET -> cyclonedx-dotnet/dotnet
+# CycloneDX, Node -> cyclonedx-npm, etc. Each just uploads the result as an
+# artifact and calls this workflow with its name.
+#
+#   # in the product workflow, after generating + uploading the SBOM artifact:
+#   dependency-track:
+#     needs: [sbom]
 #     uses: noelnovo/.github/.github/workflows/dependency-track-scan.yml@main
 #     with:
-#       working-directory: app
+#       sbom-artifact-name: sbom
 #       vault-secret-path: downops/data/<product>
-#       checkout-ref: ${{ github.event.pull_request.head.sha }}
 #     secrets:
 #       VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
 #
-# The Vault secret path must contain the keys:
-#   DT_URL, DT_API_KEY, DT_PROJECT_UUID  (NVD_API_KEY optional)
+# The Vault secret path must contain: DT_URL, DT_API_KEY, DT_PROJECT_UUID
+# (NVD_API_KEY optional).
 #
 # Cross-repo reusable workflows require this repository to be readable by the
 # caller's token, so it is public.
@@ -25,11 +32,15 @@ name: CycloneDX SBOM + Dependency-Track scan (reusable)
 on:
   workflow_call:
     inputs:
-      working-directory:
-        description: Path (relative to the repo root) whose dependencies are scanned.
+      sbom-artifact-name:
+        description: Name of the workflow artifact that contains the CycloneDX SBOM (uploaded by the caller).
+        required: true
+        type: string
+      sbom-filename:
+        description: File name of the CycloneDX SBOM inside the artifact.
         required: false
         type: string
-        default: "."
+        default: "bom.json"
       vault-url:
         description: HashiCorp Vault base URL.
         required: false
@@ -39,26 +50,6 @@ on:
         description: Vault KV path holding DT_URL / DT_API_KEY / DT_PROJECT_UUID (e.g. downops/data/wallettracker.backend).
         required: true
         type: string
-      checkout-ref:
-        description: Optional git ref to check out before scanning (e.g. the PR head SHA). Empty = the caller's ref.
-        required: false
-        type: string
-        default: ""
-      syft-image:
-        description: Syft container image used to generate the CycloneDX SBOM.
-        required: false
-        type: string
-        default: "anchore/syft:latest"
-      artifact-name:
-        description: Name of the uploaded SBOM workflow artifact.
-        required: false
-        type: string
-        default: "sbom"
-      upload-artifact:
-        description: Upload the generated bom.json as a workflow artifact.
-        required: false
-        type: boolean
-        default: true
       dt-analysis-timeout-attempts:
         description: Max polling attempts (x5s) while waiting for Dependency-Track to finish analysing the BOM.
         required: false
@@ -86,9 +77,10 @@ jobs:
     outputs:
       bom-token: ${{ steps.sbom.outputs.bom-token }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Download CycloneDX SBOM artifact
+        uses: actions/download-artifact@v4
         with:
-          ref: ${{ inputs.checkout-ref }}
+          name: ${{ inputs.sbom-artifact-name }}
 
       - name: Fetch Dependency-Track secrets from Vault
         uses: hashicorp/vault-action@v4
@@ -101,33 +93,23 @@ jobs:
             ${{ inputs.vault-secret-path }} DT_PROJECT_UUID ;
             ${{ inputs.vault-secret-path }} NVD_API_KEY
 
-      - name: Show dependency sources (debug)
+      - name: Validate CycloneDX SBOM
         run: |
-          echo "HEAD SHA: ${{ github.sha }}"
-          echo "--- pyproject.toml ---"
-          cat ${{ inputs.working-directory }}/pyproject.toml 2>/dev/null || true
-
-      - name: Generate CycloneDX SBOM with Syft
-        run: |
-          # Scan the checked-out source directory so the SBOM reflects exactly the
-          # dependencies being merged (pinned versions from the lockfile).
-          docker run --rm -v "$(pwd):/workspace" ${{ inputs.syft-image }} \
-            dir:/workspace/${{ inputs.working-directory }} -o cyclonedx-json \
-            | jq '.specVersion = "1.5" | ."$schema" = "http://cyclonedx.org/schema/bom-1.5.schema.json"' > bom.json
-          echo "--- SBOM components (first 20) ---"
-          jq -c '.components[] | {name, version, purl}' bom.json | head -20 || true
-
-      - if: ${{ inputs.upload-artifact }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ inputs.artifact-name }}
-          path: bom.json
+          SBOM="${{ inputs.sbom-filename }}"
+          if [ ! -f "$SBOM" ]; then
+            echo "::error::CycloneDX SBOM not found: $SBOM (artifact: ${{ inputs.sbom-artifact-name }})"
+            ls -la
+            exit 1
+          fi
+          jq -e '.bomFormat == "CycloneDX"' "$SBOM" >/dev/null \
+            && echo "Valid CycloneDX SBOM ($(jq '.components | length' "$SBOM") components)." \
+            || { echo "::error::$SBOM is not a CycloneDX document"; exit 1; }
 
       - name: Submit SBOM to Dependency-Track
         id: sbom
         run: |
           BODY_FILE=$(mktemp)
-          jq -n --arg project "$DT_PROJECT_UUID" --rawfile bom bom.json \
+          jq -n --arg project "$DT_PROJECT_UUID" --rawfile bom "${{ inputs.sbom-filename }}" \
             '{project: $project, bom: ($bom | @base64)}' > "$BODY_FILE"
           HTTP_RESPONSE=$(mktemp)
           HTTP_STATUS=$(curl -sS --max-time 120 -X PUT "$DT_URL/api/v1/bom" \
@@ -155,9 +137,8 @@ jobs:
 
       - name: Wait for Dependency-Track analysis
         run: |
-          # Dependency Track processes the BOM asynchronously. SonarQube's
-          # dependency-track plugin proxies the live findings at scan time, so the
-          # Sonar analysis MUST run only after DT finishes analysing this BOM.
+          # Dependency Track processes the BOM asynchronously. The caller's
+          # SonarQube job must run only after this finishes.
           BOM_TOKEN="${{ steps.sbom.outputs.bom-token }}"
           MAX_ATTEMPTS=${{ inputs.dt-analysis-timeout-attempts }}
           ATTEMPT=0
