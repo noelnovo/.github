@@ -1,0 +1,179 @@
+name: CycloneDX SBOM + Dependency-Track scan (reusable)
+
+# Generic, cross-repo reusable workflow.
+#
+# Called by a product's own workflow BEFORE it runs the SonarQube quality gate,
+# so the Dependency-Track analysis is complete when Sonar's dependency-track
+# plugin proxies the live findings.
+#
+#   security-scan:
+#     needs: [python-tests]
+#     uses: noelnovo/.github/.github/workflows/dependency-track-scan.yml@main
+#     with:
+#       working-directory: app
+#       vault-secret-path: downops/data/<product>
+#     secrets:
+#       VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+#
+# The Vault secret path must contain the keys:
+#   DT_URL, DT_API_KEY, DT_PROJECT_UUID  (NVD_API_KEY optional)
+#
+# Cross-repo reusable workflows require this repository to be readable by the
+# caller's token, so it is public.
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: Path (relative to the repo root) whose dependencies are scanned.
+        required: false
+        type: string
+        default: "."
+      vault-url:
+        description: HashiCorp Vault base URL.
+        required: false
+        type: string
+        default: "https://vault.downops.win"
+      vault-secret-path:
+        description: Vault KV path holding DT_URL / DT_API_KEY / DT_PROJECT_UUID (e.g. downops/data/wallettracker.backend).
+        required: true
+        type: string
+      syft-image:
+        description: Syft container image used to generate the CycloneDX SBOM.
+        required: false
+        type: string
+        default: "anchore/syft:latest"
+      artifact-name:
+        description: Name of the uploaded SBOM workflow artifact.
+        required: false
+        type: string
+        default: "sbom"
+      upload-artifact:
+        description: Upload the generated bom.json as a workflow artifact.
+        required: false
+        type: boolean
+        default: true
+      dt-analysis-timeout-attempts:
+        description: Max polling attempts (x5s) while waiting for Dependency-Track to finish analysing the BOM.
+        required: false
+        type: number
+        default: 60
+      runs-on:
+        description: Runner label.
+        required: false
+        type: string
+        default: "ubuntu-latest"
+    secrets:
+      VAULT_TOKEN:
+        required: true
+    outputs:
+      bom-token:
+        description: Dependency-Track BOM token for this upload.
+        value: ${{ jobs.scan.outputs.bom-token }}
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ${{ inputs.runs-on }}
+    outputs:
+      bom-token: ${{ steps.sbom.outputs.bom-token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Dependency-Track secrets from Vault
+        uses: hashicorp/vault-action@v4
+        with:
+          url: ${{ inputs.vault-url }}
+          token: ${{ secrets.VAULT_TOKEN }}
+          secrets: |
+            ${{ inputs.vault-secret-path }} DT_URL ;
+            ${{ inputs.vault-secret-path }} DT_API_KEY ;
+            ${{ inputs.vault-secret-path }} DT_PROJECT_UUID ;
+            ${{ inputs.vault-secret-path }} NVD_API_KEY
+
+      - name: Show dependency sources (debug)
+        run: |
+          echo "HEAD SHA: ${{ github.sha }}"
+          echo "--- pyproject.toml ---"
+          cat ${{ inputs.working-directory }}/pyproject.toml 2>/dev/null || true
+
+      - name: Generate CycloneDX SBOM with Syft
+        run: |
+          # Scan the checked-out source directory so the SBOM reflects exactly the
+          # dependencies being merged (pinned versions from the lockfile).
+          docker run --rm -v "$(pwd):/workspace" ${{ inputs.syft-image }} \
+            dir:/workspace/${{ inputs.working-directory }} -o cyclonedx-json \
+            | jq '.specVersion = "1.5" | ."$schema" = "http://cyclonedx.org/schema/bom-1.5.schema.json"' > bom.json
+          echo "--- SBOM components (first 20) ---"
+          jq -c '.components[] | {name, version, purl}' bom.json | head -20 || true
+
+      - if: ${{ inputs.upload-artifact }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: bom.json
+
+      - name: Submit SBOM to Dependency-Track
+        id: sbom
+        run: |
+          BODY_FILE=$(mktemp)
+          jq -n --arg project "$DT_PROJECT_UUID" --rawfile bom bom.json \
+            '{project: $project, bom: ($bom | @base64)}' > "$BODY_FILE"
+          HTTP_RESPONSE=$(mktemp)
+          HTTP_STATUS=$(curl -sS --max-time 120 -X PUT "$DT_URL/api/v1/bom" \
+            -H "Content-Type: application/json" \
+            -H "X-Api-Key: $DT_API_KEY" \
+            -d @"$BODY_FILE" \
+            -w "%{http_code}" \
+            -o "$HTTP_RESPONSE") || true
+          rm -f "$BODY_FILE"
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::Dependency Track returned HTTP $HTTP_STATUS"
+            cat "$HTTP_RESPONSE" || echo "(empty)"
+            rm -f "$HTTP_RESPONSE"
+            exit 1
+          fi
+          BOM_TOKEN=$(jq -r '.token' "$HTTP_RESPONSE" 2>/dev/null || echo "")
+          rm -f "$HTTP_RESPONSE"
+          if [ -z "$BOM_TOKEN" ] || [ "$BOM_TOKEN" = "null" ]; then
+            echo "::error::Failed to extract BOM token from DT response"
+            exit 1
+          fi
+          echo "SBOM uploaded, BOM token: $BOM_TOKEN"
+          echo "bom-token=$BOM_TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for Dependency-Track analysis
+        run: |
+          # Dependency Track processes the BOM asynchronously. SonarQube's
+          # dependency-track plugin proxies the live findings at scan time, so the
+          # Sonar analysis MUST run only after DT finishes analysing this BOM.
+          BOM_TOKEN="${{ steps.sbom.outputs.bom-token }}"
+          MAX_ATTEMPTS=${{ inputs.dt-analysis-timeout-attempts }}
+          ATTEMPT=0
+          while [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            STATUS_JSON=$(curl -sS -H "X-Api-Key: $DT_API_KEY" \
+              "$DT_URL/api/v1/bom/token/$BOM_TOKEN" 2>/dev/null || echo "")
+            PROCESSING=$(echo "$STATUS_JSON" | jq -r '.processing' 2>/dev/null || echo "")
+            if [ "$PROCESSING" = "false" ]; then
+              echo "DT analysis complete after $ATTEMPT attempt(s)."
+              break
+            fi
+            if [ "$ATTEMPT" -eq "$MAX_ATTEMPTS" ]; then
+              echo "::error::DT analysis did not complete within timeout. Last response:"
+              echo "$STATUS_JSON" || true
+              exit 1
+            fi
+            sleep 5
+          done
+
+      - name: Show Dependency-Track findings
+        run: |
+          echo "--- DT findings for project $DT_PROJECT_UUID ---"
+          curl -sS -H "X-Api-Key: $DT_API_KEY" \
+            "$DT_URL/api/v1/finding/project/$DT_PROJECT_UUID" \
+            | jq -r '.[] | "- [\(.vulnerability.severity)] \(.component.name)@\(.component.version): \(.vulnerability.vulnId)"' \
+            | head -50 || true
