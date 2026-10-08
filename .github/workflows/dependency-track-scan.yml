@@ -101,9 +101,12 @@ jobs:
             ls -la
             exit 1
           fi
-          jq -e '.bomFormat == "CycloneDX"' "$SBOM" >/dev/null \
-            && echo "Valid CycloneDX SBOM ($(jq '.components | length' "$SBOM") components)." \
-            || { echo "::error::$SBOM is not a CycloneDX document"; exit 1; }
+          if jq -e '.bomFormat == "CycloneDX"' "$SBOM" >/dev/null; then
+            echo "Valid CycloneDX SBOM (components: $(jq '.components | length' "$SBOM"))."
+          else
+            echo "::error::$SBOM is not a CycloneDX document"
+            exit 1
+          fi
 
       - name: Submit SBOM to Dependency-Track
         id: sbom
