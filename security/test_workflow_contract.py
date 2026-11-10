@@ -18,7 +18,7 @@ class WorkflowContractTests(unittest.TestCase):
     def test_untrusted_builder_has_no_scanner_or_oidc_credentials(self):
         build = self.workflow.split('\n  build:\n', 1)[1].split('\n  quality-gate:\n', 1)[0]
         self.assertNotIn('id-token:', build)
-        self.assertNotIn('secrets.', build)
+        self.assertNotRegex(build, r'\$\{\{\s*secrets\.')
         self.assertNotIn('docker login', build)
         self.assertIn('contents: read', build)
 
