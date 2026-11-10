@@ -27,6 +27,12 @@
     "instance": "instance-002",
     "role": "security-ci-portfolio-pr-reusable",
     "sources": "src,ci,Dockerfile",
+    "coverage_sources": ["ci/patch-next-vendors.mjs", "ci/runtime-smoke.cjs"],
+    "sonar_properties": {
+      "sonar.javascript.lcov.reportPaths": "coverage/lcov.info",
+      "sonar.test.inclusions": "ci/test_*.py,ci/test_*.cjs",
+      "sonar.exclusions": "**/__pycache__/**,ci/test_*.py,ci/test_*.cjs"
+    },
     "build_args": {}
   },
   "1406330066": {

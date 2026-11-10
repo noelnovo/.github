@@ -180,21 +180,75 @@ def unpack_source(data, destination, *, android=False):
             target.chmod(0o600)
 
 
-def unpack_bom(data, destination):
+def validated_lcov(raw, destination, sources):
+    if len(raw) > 2 * 1024 * 1024:
+        raise RuntimeError('Coverage report exceeded bounds')
+    allowed = {str(safe_path(name)) for name in sources}
+    seen, lines = set(), []
+    current, maximum, has_data = None, 0, False
+    for line in raw.decode('utf-8').splitlines():
+        if line.startswith('SF:'):
+            if current is not None:
+                raise RuntimeError('Unterminated LCOV source record')
+            name = line[3:]
+            for prefix in ['file:///app/', '/app/']:
+                if name.startswith(prefix):
+                    name = name[len(prefix):]
+                    break
+            current = str(safe_path(name))
+            if current not in allowed or current in seen:
+                raise RuntimeError('Unexpected or duplicate coverage source')
+            source = destination.joinpath(*PurePosixPath(current).parts)
+            if not source.is_file() or source.is_symlink():
+                raise RuntimeError('Coverage source is absent or not regular')
+            maximum = len(source.read_bytes().splitlines())
+            seen.add(current)
+            has_data = False
+            line = 'SF:' + current  # Path mapping only; never change hit counts.
+        elif line.startswith('DA:'):
+            fields = line[3:].split(',')
+            if (current is None or len(fields) < 2 or not fields[0].isdigit()
+                or not fields[1].isdigit() or not 1 <= int(fields[0]) <= maximum):
+                raise RuntimeError('Invalid LCOV source line/count')
+            has_data = True
+        elif line == 'end_of_record':
+            if current is None or not has_data:
+                raise RuntimeError('LCOV record has no executable line data')
+            current = None
+        lines.append(line)
+    if current is not None or seen != allowed:
+        raise RuntimeError('Missing required coverage source evidence')
+    report = destination / 'coverage/lcov.info'
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text('\n'.join(lines) + '\n')
+    report.chmod(0o600)
+    print(json.dumps({'coverage_report_validated': True, 'source_files': len(seen)}))
+
+
+def unpack_bom(data, destination, *, coverage_sources=None):
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         files = [m for m in archive.infolist() if not m.is_dir()]
-        if len(files) != 1:
-            raise RuntimeError('Exactly one SBOM artifact file is required')
-        member = files[0]
-        path = safe_path(member.filename)
-        mode = (member.external_attr >> 16) & 0o170000
-        if str(path) != 'bom.json' or mode not in [0, stat.S_IFREG] or member.file_size > 16 * 1024 * 1024:
-            raise RuntimeError('Unexpected SBOM artifact entry')
+        expected = {'bom.json'} | ({'coverage/lcov.info'} if coverage_sources else set())
+        entries = {}
+        for member in files:
+            name = str(safe_path(member.filename))
+            mode = (member.external_attr >> 16) & 0o170000
+            if name not in expected or name in entries or mode not in [0, stat.S_IFREG]:
+                raise RuntimeError('Unexpected SBOM/coverage artifact entry')
+            limit = 2 * 1024 * 1024 if name.endswith('.info') else 16 * 1024 * 1024
+            if member.file_size > limit:
+                raise RuntimeError('SBOM/coverage artifact exceeded bounds')
+            entries[name] = member
+        if set(entries) != expected:
+            raise RuntimeError('Required SBOM/coverage artifact file missing')
+        member = entries['bom.json']
         raw = archive.read(member)
         bom = json.loads(raw)
         if bom.get('bomFormat') != 'CycloneDX' or not bom.get('components'):
             raise RuntimeError('Resolved, nonempty CycloneDX SBOM required')
         (destination / 'bom.json').write_bytes(raw)
+        if coverage_sources:
+            validated_lcov(archive.read(entries['coverage/lcov.info']), destination, coverage_sources)
 
 
 def unpack_android(data, destination):
@@ -278,6 +332,7 @@ def context(profile, expected):
         output.write('reuse_android=' + str(profile.get('adapter') == 'android' and expected.get('event') == 'push').lower() + '\n')
         output.write('target=' + expected['target'] + '\n')
         output.write('analysis_group=' + profile.get('analysis_group', 'sonar-dtrack-analysis-' + profile['repository_id']) + '\n')
+        output.write('coverage_format=' + ('lcov' if profile.get('coverage_sources') else 'none') + '\n')
     print(json.dumps({'candidate_verified': True, 'candidate': commit, 'target': expected['target']}))
 
 
@@ -302,7 +357,10 @@ def evaluate(profile, expected):
             unpack_android(data, work)
         else:
             unpack_source(source, work)
-            unpack_bom(data, work)
+            if profile.get('coverage_sources'):
+                unpack_bom(data, work, coverage_sources=profile['coverage_sources'])
+            else:
+                unpack_bom(data, work)
         settings = {'sonar.sources': profile['sources'], 'sonar.tests': 'ci',
             'sonar.test.inclusions': 'ci/test_*.py', 'sonar.exclusions': '**/__pycache__/**,ci/test_*.py',
             'sonar.sourceEncoding': 'UTF-8', 'sonar.scm.disabled': 'true', 'sonar.scm.revision': commit}
