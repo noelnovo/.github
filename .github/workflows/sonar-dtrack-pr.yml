@@ -1,0 +1,100 @@
+name: Reusable SonarQube and Dependency-Track security
+on:
+  workflow_call:
+permissions:
+  contents: read
+concurrency:
+  group: reusable-security-${{ github.repository_id }}-${{ github.event.pull_request.number }}
+  queue: max
+  cancel-in-progress: false
+jobs:
+  candidate:
+    name: Candidate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      candidate: ${{ steps.context.outputs.candidate }}
+      hugo_baseurl: ${{ steps.context.outputs.hugo_baseurl }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: noelnovo/.github
+          ref: 932d5c69b89b8111a513bb45c97aa7726dc470b8
+          path: security-control
+          persist-credentials: false
+      - id: context
+        run: python3 security-control/security/premerge.py context
+        env:
+          SECURITY_CONTROL_SHA: 932d5c69b89b8111a513bb45c97aa7726dc470b8
+          GITHUB_TOKEN: ${{ github.token }}
+
+  build:
+    name: Build and SBOM
+    needs: candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Executes untrusted Dockerfile/build code on its own hosted VM. No Vault,
+    # OIDC, registry login, scanner key, status write or environment secrets.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.candidate.outputs.candidate }}
+          persist-credentials: false
+      - name: Build candidate without credentials
+        env:
+          SOURCE_CANDIDATE: ${{ needs.candidate.outputs.candidate }}
+          HUGO_BASEURL: ${{ needs.candidate.outputs.hugo_baseurl }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_CANDIDATE"
+          args=()
+          if [ -n "$HUGO_BASEURL" ]; then args+=(--build-arg "HUGO_BASEURL=$HUGO_BASEURL"); fi
+          docker build --label "org.opencontainers.image.revision=$SOURCE_CANDIDATE" \
+            "${args[@]}" -t security-candidate:ci .
+          docker save -o security-image.tar security-candidate:ci
+      - name: Generate resolved runtime-image CycloneDX SBOM
+        run: |
+          docker run --rm --volume "$PWD:/work:ro" \
+            anchore/syft@sha256:03215d0e98b661d0ecbc8575dbc14d65be1743b5de5df6410aecb7e80f95b060 \
+            docker-archive:/work/security-image.tar -o cyclonedx-json > bom.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: security-bom-${{ needs.candidate.outputs.candidate }}-${{ github.run_attempt }}
+          path: bom.json
+          if-no-files-found: error
+          retention-days: 7
+
+  quality-gate:
+    name: SonarQube + Dependency-Track (${{ github.base_ref }})
+    if: always()
+    needs: [candidate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: sonar-dtrack-analysis-${{ github.repository_id }}
+      queue: max
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Literal reviewed code pin, never a caller-provided ref or PR script.
+          repository: noelnovo/.github
+          ref: 932d5c69b89b8111a513bb45c97aa7726dc470b8
+          path: security-control
+          persist-credentials: false
+      - name: Evaluate updated Dependency-Track metrics through SonarQube
+        run: python3 security-control/security/premerge.py gate
+        env:
+          SECURITY_CONTROL_SHA: 932d5c69b89b8111a513bb45c97aa7726dc470b8
+          SECURITY_BUILD_RESULT: ${{ needs.build.result }}
+          SECURITY_CANDIDATE: ${{ needs.candidate.outputs.candidate }}
+          GITHUB_TOKEN: ${{ github.token }}
