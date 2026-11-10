@@ -152,6 +152,8 @@ def sonar(creds, work):
 def evaluate(cfg, source):
     identity = candidate(cfg, source)
     out = source / 'security-output'
+    if out.is_symlink() or not out.is_dir():
+        raise RuntimeError('Invalid artifact directory')
     for name in ['bom.json', 'receipt.json']:
         path = out / name
         if path.is_symlink() or not path.is_file() or path.stat().st_size > 16 * 1024 * 1024:

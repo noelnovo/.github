@@ -48,6 +48,19 @@ class GitLabGateTests(unittest.TestCase):
     def test_empty_bom_rejected(self):
         with self.assertRaises(RuntimeError):subject.validate_bom(b'{"bomFormat":"CycloneDX","components":[]}')
 
+    def test_target_not_in_head_rejected(self):
+        env = self.env(); cfg = subject.profile(env)
+        mr = {'state': 'opened', 'sha': 'a'*40, 'target_branch': 'main', 'target_project_id': 10}
+        with patch.dict(os.environ, env, clear=True), patch.object(subject, 'api', return_value=mr), \
+             patch.object(subject, 'command', side_effect=['a'*40, 'b'*40+' refs/heads/main', '', RuntimeError('Not fast forward')]):
+            with self.assertRaises(RuntimeError):subject.candidate(cfg, Path('/source'))
+
+    def test_missing_producer_rejected_before_credentials(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(subject, 'candidate', return_value={}), patch.object(subject, 'credentials') as login:
+                with self.assertRaises(RuntimeError):subject.evaluate({}, Path(directory))
+                login.assert_not_called()
+
     def test_oversized_bom_rejected(self):
         with self.assertRaises(RuntimeError):subject.validate_bom(b'x'*(16*1024*1024+1))
 
