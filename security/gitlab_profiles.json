@@ -1,0 +1,10 @@
+{
+  "10": {
+    "repository": "downops/prompt-gateway",
+    "targets": ["main"],
+    "instance": "instance-004",
+    "role": "security-ci-prompt-mr",
+    "sources": "app,Dockerfile",
+    "tests": "tests"
+  }
+}
