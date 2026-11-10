@@ -1,0 +1,37 @@
+# Set project CI configuration to this file@downops/github-workflows:<SHA>.
+# No MR-controlled CI file is included. This wrapper preserves existing delivery.
+include:
+  - local: /gitlab/dependency-track-scan.yml
+  - project: downops/prompt-gateway
+    ref: 86e1cc1320389b5d0aa7ab92259daf87f2e15e61
+    file: /.gitlab-ci.yml
+
+stages: [vault-maintenance, test, security, build, deploy]
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+    - if: '$VAULT_RENEW_ONLY == "1" && $CI_COMMIT_REF_PROTECTED == "true"'
+
+unit:
+  only: null
+  except: null
+  rules:
+    - if: '$VAULT_RENEW_ONLY == "1"'
+      when: never
+    - when: on_success
+
+e2e:
+  only: null
+  except: null
+  rules:
+    - if: '$VAULT_RENEW_ONLY == "1"'
+      when: never
+    - when: on_success
+
+security-build:
+  needs: [e2e]
+
+build:
+  needs: [security]
