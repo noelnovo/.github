@@ -52,8 +52,10 @@ def trusted_identity(cfg, env):
         return (env.get('GITHUB_ACTIONS') == 'true'
             and env.get('GITHUB_REPOSITORY') == cfg['repository']
             and env.get('GITHUB_REPOSITORY_ID') == cfg['repository_id']
-            and env.get('GITHUB_EVENT_NAME') == 'pull_request'
-            and env.get('GITHUB_BASE_REF') in cfg['targets'])
+            and ((env.get('GITHUB_EVENT_NAME') == 'pull_request'
+                  and env.get('GITHUB_BASE_REF') in cfg['targets'])
+                 or (env.get('GITHUB_EVENT_NAME') == 'push' and 'push' in cfg.get('events', [])
+                     and env.get('GITHUB_REF') in ['refs/heads/' + b for b in cfg['targets']])))
     if cfg['provider'] == 'github':
         return (env.get('GITHUB_ACTIONS') == 'true'
             and env.get('GITHUB_REPOSITORY') == cfg['repository']

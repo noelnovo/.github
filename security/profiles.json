@@ -1,4 +1,25 @@
 {
+  "909094292": {
+    "repository": "noelnovo/WalletTracker",
+    "repository_id": "909094292",
+    "targets": ["dev", "main"],
+    "events": ["pull_request", "push"],
+    "adapter": "android",
+    "instance": "instance-005",
+    "roles": {
+      "pull_request": "security-ci-android-pr-reusable",
+      "push": "security-ci-android-push-reusable"
+    },
+    "status_prefix": "security/sonarqube-dtrack-",
+    "analysis_group": "wallettracker-security-analysis",
+    "sources": "app/src/main,ci,scripts",
+    "sonar_properties": {
+      "sonar.tests": "app/src/test,tests",
+      "sonar.java.binaries": "app/build",
+      "sonar.exclusions": "**/__pycache__/**,ci/test_*.py"
+    },
+    "build_args": {}
+  },
   "864547743": {
     "repository": "noelnovo/nn-PortFolio",
     "repository_id": "864547743",
