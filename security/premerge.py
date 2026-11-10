@@ -65,19 +65,28 @@ def download(url, *, token=None, data=None, binary=False):
     return raw if binary else (json.loads(raw) if raw else {})
 
 
-def api(profile, path):
+def api(profile, path, data=None):
     return download('https://api.github.com/repos/' + profile['repository'] + path,
-                    token=os.environ['GITHUB_TOKEN'])
+                    token=os.environ['GITHUB_TOKEN'], data=data)
 
 
 def identity(event, env):
-    if env.get('GITHUB_EVENT_NAME') != 'pull_request':
-        raise RuntimeError('Only PR events are supported')
     profiles = json.loads((ROOT / 'security/profiles.json').read_text())
     project_id = str(event['repository']['id'])
     if project_id != env.get('GITHUB_REPOSITORY_ID') or project_id not in profiles:
         raise RuntimeError('Caller repository is not registered')
     profile = profiles[project_id]
+    event_name = env.get('GITHUB_EVENT_NAME')
+    if (profile['repository'] != env.get('GITHUB_REPOSITORY')
+        or event_name not in profile.get('events', ['pull_request'])):
+        raise RuntimeError('Unexpected repository or event')
+    if event_name == 'push':
+        target = env.get('GITHUB_REF', '').removeprefix('refs/heads/')
+        commit = sha(event['after'])
+        if (target not in profile['targets'] or env.get('GITHUB_REF') != 'refs/heads/' + target
+            or env.get('GITHUB_SHA') != commit or event.get('deleted')):
+            raise RuntimeError('Unexpected push identity')
+        return profile, {'event': event_name, 'number': 0, 'head': commit, 'base': None, 'target': target}
     pr = event['pull_request']
     if (profile['repository'] != env.get('GITHUB_REPOSITORY')
         or pr['base']['repo']['id'] != int(project_id)
@@ -86,11 +95,16 @@ def identity(event, env):
     number = event['number']
     if type(number) is not int or number <= 0:
         raise RuntimeError('Invalid PR number')
-    return profile, {'number': number, 'head': sha(pr['head']['sha']),
+    return profile, {'event': event_name, 'number': number, 'head': sha(pr['head']['sha']),
                      'base': sha(pr['base']['sha']), 'target': pr['base']['ref']}
 
 
 def candidate(profile, expected):
+    if expected.get('event') == 'push':
+        current = api(profile, '/branches/' + expected['target'])
+        if current['commit']['sha'] != expected['head'] or not current.get('protected'):
+            raise RuntimeError('Stale or unprotected push source')
+        return sha(current['commit']['sha'])
     current = api(profile, '/pulls/' + str(expected['number']))
     if (current['state'] != 'open' or current['head']['sha'] != expected['head']
         or current['base']['sha'] != expected['base'] or current['base']['ref'] != expected['target']
@@ -114,6 +128,19 @@ def controller():
         raise RuntimeError('Control checkout is not the pinned code revision')
 
 
+def publish(profile, expected, state):
+    # Existing Android branch protection consumes these exact statuses. Image
+    # profiles keep their existing check-run interface, without extra statuses.
+    if not profile.get('status_prefix') or expected.get('event') != 'pull_request':
+        return
+    if state not in ['pending', 'success', 'failure']:
+        raise RuntimeError('Invalid required-status state')
+    api(profile, '/statuses/' + expected['head'], {
+        'state': state, 'context': profile['status_prefix'] + expected['target'],
+        'description': 'Exact candidate ' + ('passed the security gate' if state == 'success' else 'security ' + state),
+        'target_url': 'https://github.com/' + profile['repository'] + '/actions/runs/' + str(int(os.environ['GITHUB_RUN_ID']))})
+
+
 def safe_path(name):
     path = PurePosixPath(name)
     if not path.parts or path.is_absolute() or '..' in path.parts or '\\' in name or '\x00' in name:
@@ -121,7 +148,7 @@ def safe_path(name):
     return path
 
 
-def unpack_source(data, destination):
+def unpack_source(data, destination, *, android=False):
     total = 0
     seen = set()
     prefix = None
@@ -135,6 +162,8 @@ def unpack_source(data, destination):
             if not relative.parts:
                 continue
             if relative.parts[0] in ['.git', '.scannerwork', 'bom.json', 'sonar-project.properties']:
+                continue
+            if android and (relative.parts[0] == 'build' or relative.parts[:2] == ('app', 'build')):
                 continue
             if str(relative) in seen:
                 raise RuntimeError('Duplicate source entry')
@@ -168,6 +197,48 @@ def unpack_bom(data, destination):
         (destination / 'bom.json').write_bytes(raw)
 
 
+def unpack_android(data, destination):
+    """Bytecode is scanner data only. No Gradle/JAR/script executes here."""
+    total, classes, sbom = 0, 0, False
+    seen = set()
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        if len(archive.infolist()) > 20000:
+            raise RuntimeError('Too many Android artifact entries')
+        for member in archive.infolist():
+            path = safe_path(member.filename)
+            mode = (member.external_attr >> 16) & 0o170000
+            if mode not in [0, stat.S_IFREG, stat.S_IFDIR]:
+                raise RuntimeError('Android artifact link/device rejected')
+            if member.is_dir():
+                continue
+            name = str(path)
+            is_bom = name == 'build/reports/cyclonedx/bom.json'
+            allowed = is_bom or (name.startswith(('app/build/intermediates/javac/',
+                'app/build/tmp/kotlin-classes/', 'app/build/intermediates/built_in_kotlinc/'))
+                and name.endswith(('.class', '.jar', '.kotlin_module')))
+            if not allowed or name in seen:
+                raise RuntimeError('Unexpected or duplicate Android artifact path')
+            seen.add(name)
+            total += member.file_size
+            if total > MAX_EXPANDED or (is_bom and member.file_size > 16 * 1024 * 1024):
+                raise RuntimeError('Android artifact expansion exceeded bounds')
+            raw = archive.read(member)
+            if is_bom:
+                bom = json.loads(raw)
+                if bom.get('bomFormat') != 'CycloneDX' or not bom.get('components'):
+                    raise RuntimeError('Resolved Android CycloneDX required')
+                (destination / 'bom.json').write_bytes(raw)
+                sbom = True
+            else:
+                target = destination.joinpath(*path.parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(raw)
+                target.chmod(0o600)
+                classes += name.endswith('.class')
+    if not classes or not sbom:
+        raise RuntimeError('Android SBOM and compiled classes required')
+
+
 def artifact(profile, commit):
     run = int(os.environ['GITHUB_RUN_ID'])
     attempt = int(os.environ['GITHUB_RUN_ATTEMPT'])
@@ -190,6 +261,7 @@ def artifact(profile, commit):
 
 def context(profile, expected):
     controller()
+    publish(profile, expected, 'pending')
     commit = None
     for attempt in range(5):
         commit = candidate(profile, expected)
@@ -202,6 +274,10 @@ def context(profile, expected):
     with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
         output.write('candidate=' + commit + '\n')
         output.write('hugo_baseurl=' + hugo + '\n')
+        output.write('adapter=' + profile.get('adapter', 'image') + '\n')
+        output.write('reuse_android=' + str(profile.get('adapter') == 'android' and expected.get('event') == 'push').lower() + '\n')
+        output.write('target=' + expected['target'] + '\n')
+        output.write('analysis_group=' + profile.get('analysis_group', 'sonar-dtrack-analysis-' + profile['repository_id']) + '\n')
     print(json.dumps({'candidate_verified': True, 'candidate': commit, 'target': expected['target']}))
 
 
@@ -217,13 +293,23 @@ def evaluate(profile, expected):
                       token=os.environ['GITHUB_TOKEN'], binary=True)
     cfg = {**profile, 'provider': 'github-reusable', 'vault_url': 'https://vault.downops.win',
            'audience': 'https://vault.downops.win', 'auth_mount': 'github-actions'}
+    if 'roles' in profile:
+        cfg['role'] = profile['roles'][expected['event']]
     with tempfile.TemporaryDirectory(prefix='security-pr-', dir=os.environ.get('RUNNER_TEMP')) as directory:
         work = Path(directory)
-        unpack_source(source, work)
-        unpack_bom(data, work)
-        properties = ('sonar.sources=' + profile['sources'] + '\nsonar.tests=ci\n'
-            'sonar.test.inclusions=ci/test_*.py\nsonar.exclusions=**/__pycache__/**,ci/test_*.py\n'
-            'sonar.sourceEncoding=UTF-8\nsonar.scm.disabled=true\nsonar.scm.revision=' + commit + '\n')
+        if profile.get('adapter') == 'android':
+            unpack_source(source, work, android=True)
+            unpack_android(data, work)
+        else:
+            unpack_source(source, work)
+            unpack_bom(data, work)
+        settings = {'sonar.sources': profile['sources'], 'sonar.tests': 'ci',
+            'sonar.test.inclusions': 'ci/test_*.py', 'sonar.exclusions': '**/__pycache__/**,ci/test_*.py',
+            'sonar.sourceEncoding': 'UTF-8', 'sonar.scm.disabled': 'true', 'sonar.scm.revision': commit}
+        if profile.get('adapter') == 'android':
+            settings.pop('sonar.test.inclusions')
+        settings.update(profile.get('sonar_properties', {}))
+        properties = ''.join(key + '=' + value + '\n' for key, value in settings.items())
         (work / 'sonar-project.properties').write_text(properties)
         security_gate.ROOT = work
         # Do NOT call image prepare/build here. The privileged job only analyzes
@@ -231,10 +317,12 @@ def evaluate(profile, expected):
         security_gate.scan(cfg)
     if candidate(profile, expected) != commit:
         raise RuntimeError('PR changed during analysis; success refused')
+    publish(profile, expected, 'success')
     print(json.dumps({'security_passed': True, 'candidate': commit}))
 
 
 def main():
+    profile, expected = None, None
     try:
         event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
         profile, expected = identity(event, os.environ)
@@ -245,6 +333,11 @@ def main():
         else:
             raise RuntimeError('Expected context or gate')
     except Exception as error:
+        if profile is not None and expected is not None:
+            try:
+                publish(profile, expected, 'failure')
+            except Exception:
+                pass  # Failure/missing/pending required status never becomes green.
         reasons = {'Failed, cancelled or skipped producer cannot pass': 'producer_not_successful',
             'SonarQube quality gate failed; publication blocked': 'quality_gate_rejected'}
         print(json.dumps({'security_failed': True, 'error_type': type(error).__name__,

@@ -2,7 +2,7 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-CODE_PIN = '932d5c69b89b8111a513bb45c97aa7726dc470b8'
+CODE_PIN = 'd07320d44279f15bdeb50eb403118fd1f7442bda'
 
 
 class WorkflowContractTests(unittest.TestCase):
@@ -16,8 +16,9 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn('DT_API_KEY:', self.workflow)
 
     def test_unified_entrypoint_preserves_shared_serialization(self):
-        self.assertIn('group: sonar-dtrack-analysis-${{ github.repository_id }}', self.workflow)
-        self.assertIn('group: reusable-security-${{ github.repository_id }}-${{ github.event.pull_request.number }}', self.workflow)
+        self.assertIn("format('sonar-dtrack-analysis-{0}', github.repository_id)", self.workflow)
+        self.assertIn('needs.candidate.outputs.analysis_group', self.workflow)
+        self.assertIn('group: reusable-security-${{ github.repository_id }}-${{ github.event.pull_request.number || github.ref }}', self.workflow)
         self.assertEqual(self.workflow.count('queue: max'), 2)
 
     def test_control_pin_is_literal_not_caller_controlled(self):
@@ -35,12 +36,21 @@ class WorkflowContractTests(unittest.TestCase):
 
     def test_visible_gate_cannot_silently_skip_failed_producer(self):
         gate = self.workflow.split('\n  quality-gate:\n', 1)[1]
-        self.assertIn('name: SonarQube + Dependency-Track (${{ github.base_ref }})', gate)
+        self.assertIn('name: SonarQube + Dependency-Track (${{ github.base_ref || github.ref_name }})', gate)
         self.assertIn('if: always()', gate)
         self.assertIn('SECURITY_BUILD_RESULT: ${{ needs.build.result }}', gate)
         self.assertIn('queue: max', gate)
         self.assertNotIn('docker build', gate)
         self.assertNotIn('continue-on-error', gate)
+
+    def test_android_setup_and_push_reuse_are_only_in_credential_free_build(self):
+        build = self.workflow.split('\n  build:\n', 1)[1].split('\n  quality-gate:\n', 1)[0]
+        gate = self.workflow.split('\n  quality-gate:\n', 1)[1]
+        self.assertIn('testDebugUnitTest cyclonedxBom', build)
+        self.assertIn('security-input-${{ needs.candidate.outputs.candidate }}', build)
+        self.assertNotIn('statuses: write', build)
+        for value in ['sdkmanager', 'gradlew', 'setup-java', 'download-artifact']:
+            self.assertNotIn(value, gate)
 
 
 if __name__ == '__main__':
