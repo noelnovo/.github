@@ -12,7 +12,7 @@
     DOCKER_TLS_CERTDIR: ""
     DOCKER_TLS_VERIFY: ""
     DOCKER_CERT_PATH: ""
-    SECURITY_CONTROL_SHA: 55e51eba0db3851786f8928f6eafde1ac2b232fb
+    SECURITY_CONTROL_SHA: a5b025afc78def4fde36dd020e8dbb78337b846b
   before_script:
     - apk add --no-cache python3 git >/dev/null
     - |
@@ -43,6 +43,7 @@ security-build:
       - security-output/receipt.json
       - security-output/lcov.info
       - security-output/python.xml
+      - security-output/android.zip
 
 security:
   extends: .security-control
