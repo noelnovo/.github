@@ -7,7 +7,18 @@ CODE_PIN = '932d5c69b89b8111a513bb45c97aa7726dc470b8'
 
 class WorkflowContractTests(unittest.TestCase):
     def setUp(self):
-        self.workflow = (ROOT / '.github/workflows/sonar-dtrack-pr.yml').read_text()
+        self.workflow = (ROOT / '.github/workflows/dependency-track-scan.yml').read_text()
+
+    def test_one_canonical_security_entrypoint(self):
+        self.assertFalse((ROOT / '.github/workflows/sonar-dtrack-pr.yml').exists())
+        self.assertIn('workflow_call:', self.workflow)
+        self.assertNotIn('VAULT_TOKEN:', self.workflow)
+        self.assertNotIn('DT_API_KEY:', self.workflow)
+
+    def test_unified_entrypoint_preserves_shared_serialization(self):
+        self.assertIn('group: sonar-dtrack-analysis-${{ github.repository_id }}', self.workflow)
+        self.assertIn('group: reusable-security-${{ github.repository_id }}-${{ github.event.pull_request.number }}', self.workflow)
+        self.assertEqual(self.workflow.count('queue: max'), 2)
 
     def test_control_pin_is_literal_not_caller_controlled(self):
         self.assertEqual(self.workflow.count('ref: ' + CODE_PIN), 2)

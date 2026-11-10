@@ -1,114 +1,104 @@
-# .github
+# Shared GitHub security workflow
 
-Reusable GitHub Actions workflows shared across all products.
+`.github/workflows/dependency-track-scan.yml` is the single reusable security
+entrypoint. It builds the exact PR merge candidate without credentials, generates
+a runtime-image CycloneDX SBOM, waits for Dependency-Track, and evaluates the
+assigned SonarQube quality gate using the Dependency-Track plugin metrics.
 
-## `dependency-track-scan.yml`
+The separate `test-security-control.yml` runs controller unit tests; it is not a
+second product security implementation.
 
-Generic, **toolchain-agnostic** reusable workflow (`on: workflow_call`). It does
-exactly one thing:
+## Consumer configuration
 
-1. downloads an already-generated **CycloneDX** SBOM (a workflow artifact that the
-   caller produced),
-2. resolves the Dependency-Track target (explicit inputs/secrets, or Vault),
-3. pushes the SBOM to **OWASP Dependency-Track**,
-4. waits until DT finishes analysing it,
-5. prints the live DT findings.
-
-It does **not** generate the SBOM — that is toolchain-specific and belongs to each
-product's own workflow (Python → Syft, .NET → `cyclonedx-dotnet` / `dotnet CycloneDX`,
-Node → `cyclonedx-npm`, Java → `cyclonedx-maven-plugin`, …).
-
-Run it **before** the product's SonarQube quality-gate job: SonarQube's
-dependency-track plugin proxies the live DT findings at scan time.
-
-### Dependency-Track target (per project)
-
-The workflow is parameterised so one workflow serves many DT projects, each with
-its own project UUID and API key:
-
-- explicit `dt-url` input, `dt-project-uuid` input, `DT_API_KEY` secret, **or**
-- read from Vault via `vault-secret-path` + `VAULT_TOKEN`.
-
-Explicit values always win, so you can override just the project id and keep the
-rest in Vault.
-
-### Caller example — explicit (per project)
+Use a reviewed, immutable **40-character commit SHA**, never a moving `main` tag:
 
 ```yaml
-  dependency-track:
-    needs: [sbom]
-    uses: noelnovo/.github/.github/workflows/dependency-track-scan.yml@main
-    with:
-      sbom-artifact-name: sbom
-      dt-url: ${{ vars.DT_URL }}
-      dt-project-uuid: ${{ vars.DT_PROJECT_UUID }}
-    secrets:
-      DT_API_KEY: ${{ secrets.DT_API_KEY }}
+name: Security
+on:
+  pull_request:
+    branches: [dev, main] # Use the repository's actual targets.
+permissions:
+  contents: read
+jobs:
+  security:
+    name: Security
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+      id-token: write
+    uses: noelnovo/.github/.github/workflows/dependency-track-scan.yml@<reviewed-40-character-commit>
 ```
 
-### Caller example — from Vault
+Do not pass `secrets: inherit`, scanner/API keys, a static Vault token, arbitrary
+secret paths, or caller-selected control scripts. Signed caller repository ID and
+the exact called-workflow path/SHA are bound in Vault. Unknown callers fail closed.
 
-```yaml
-  dependency-track:
-    needs: [sbom]
-    uses: noelnovo/.github/.github/workflows/dependency-track-scan.yml@main
-    with:
-      sbom-artifact-name: sbom
-      vault-secret-path: downops/data/<product>
-    secrets:
-      VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
+The final required check name stays:
+
+- `Security / SonarQube + Dependency-Track (dev)`
+- `Security / SonarQube + Dependency-Track (main)`
+
+Require the appropriate final check and protect CI-control modifications. A job
+name alone cannot prevent a contributor replacing caller CI with a forged check.
+Branch enforcement is separately configured by the repository owner.
+
+## Trust boundary and analysis order
+
+1. A credential-free context job validates the PR head, current target and exact
+   merge-commit parents through GitHub.
+2. A fresh hosted build runner executes the candidate Dockerfile with contents-read
+   permission only: no Vault, OIDC, registry login or scanner keys. Pinned Syft
+   generates the resolved runtime-image SBOM.
+3. A different fresh runner executes literal pinned controller code. It fetches
+   candidate source as data and accepts only the digest/size/path-verified,
+   same-run SBOM artifact. PR scripts, hooks and scanner settings do not execute.
+4. Job-time OIDC obtains four project-scoped Vault records: uploader, analysis
+   token, read-only plugin key, project-settings token. Recovery passwords and
+   unrelated projects are denied; no secret is a workflow output.
+5. DT processing finishes, plugin settings reconcile from Vault, Sonar analyzes,
+   and every configured DT condition must be present in that exact analysis.
+   Sonar's configured gate—not a hard-coded severity threshold—decides success.
+6. Head/base/candidate are rechecked before success. Missing, stale, failed,
+   cancelled or skipped producer evidence fails the always-evaluated final job.
+
+Shared workflow and per-project analysis queues use `queue: max`; their group
+names are stable across old/new pins so migrations cannot race shared DT state.
+
+## Register another product
+
+Review a profile in `security/profiles.json`: immutable repository ID/name,
+targets, service-instance mapping, role name, source directories and fixed build
+arguments. Provision separate project-scoped uploader/analysis/plugin/settings
+identities in Vault. Bind OIDC to the exact new called-workflow path and commit;
+keep recovery credentials outside the CI policy.
+
+The current build adapter supports runtime OCI images with a Dockerfile. Other
+toolchains need a reviewed credential-free build adapter and corresponding SBOM
+validation—not arbitrary privileged caller commands. Registering a profile does
+not itself add an application caller or activate branch protection.
+
+## Migration from the earlier generic uploader
+
+The old artifact-only uploader accepted `sbom-artifact-name`, target URL/UUID,
+static `DT_API_KEY` and optional `VAULT_TOKEN`. Those inputs are deliberately not
+part of the trusted PR interface. It did not provide the candidate binding or
+secret-isolation guarantees required here. Inventory consumers before upgrading
+their pins; old immutable commits remain accessible in Git history, but the new
+entrypoint does not silently retain that weaker mode.
+
+`sonar-dtrack-pr.yml` has been consolidated into this file, not kept as a duplicate
+or nested wrapper. Consumer job names and queue groups are preserved. During
+migration Vault may temporarily trust the two reviewed exact paths/SHAs; remove
+the old binding after all intended target branches use the new entrypoint.
+
+## Validation
+
+```sh
+python3 -m unittest discover -s security -p 'test_*.py'
 ```
 
-### SBOM generation (product-specific)
-
-```yaml
-  # Python
-  sbom:
-    steps:
-      - uses: actions/checkout@v4
-      - run: docker run --rm -v "$(pwd):/workspace" anchore/syft dir:/workspace/app -o cyclonedx-json > bom.json
-      - uses: actions/upload-artifact@v4
-        with: { name: sbom, path: bom.json }
-
-  # .NET (same artifact name/filename -> the generic workflow is unchanged)
-  # sbom:
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - run: dotnet tool install --global CycloneDX && dotnet CycloneDX app/MyApp.csproj -o . -F bom.json
-  #     - uses: actions/upload-artifact@v4
-  #       with: { name: sbom, path: bom.json }
-```
-
-### Inputs
-
-| Input | Required | Default | Description |
-|---|---|---|---|
-| `sbom-artifact-name` | **yes** | — | Name of the workflow artifact containing the CycloneDX SBOM. |
-| `sbom-filename` | no | `bom.json` | File name of the SBOM inside the artifact. |
-| `dt-url` | no | `""` | Dependency-Track base URL (overrides Vault). |
-| `dt-project-uuid` | no | `""` | Dependency-Track project UUID to upload to (overrides Vault). |
-| `vault-url` | no | `https://vault.downops.win` | Vault base URL (Vault mode only). |
-| `vault-secret-path` | no | `""` | Vault KV path with `DT_URL` / `DT_PROJECT_UUID` / `DT_API_KEY` (Vault mode). |
-| `dt-analysis-timeout-attempts` | no | `60` | Poll attempts (×5s) waiting for DT analysis. |
-| `runs-on` | no | `ubuntu-latest` | Runner label. |
-
-### Secrets
-
-| Secret | Required | Description |
-|---|---|---|
-| `DT_API_KEY` | no | Dependency-Track API key for the target project (overrides Vault). |
-| `VAULT_TOKEN` | no | Vault token (Vault mode only). |
-
-> Supply the DT target either explicitly (`dt-url` + `dt-project-uuid` + `DT_API_KEY`)
-> or via Vault (`vault-secret-path` + `VAULT_TOKEN`); the workflow errors if it
-> cannot resolve URL, project UUID and API key.
-
-### Outputs
-
-| Output | Description |
-|---|---|
-| `bom-token` | Dependency-Track BOM token for the upload. |
-
-> Cross-repo reusable workflows require this repository to be readable by the
-> caller's token, which is why it is public. If it must be private, the caller
-> has to use a PAT/app token with read access.
+Validate the workflows with actionlint and real hosted runs. Older actionlint
+schemas need only the narrowly documented `queue` diagnostic ignored, not other
+validation disabled. Never merge an unreviewed pin, weaken a quality gate, or
+claim branch enforcement solely from a visible workflow/check.
