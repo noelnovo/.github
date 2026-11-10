@@ -73,6 +73,13 @@ arguments. Provision separate project-scoped uploader/analysis/plugin/settings
 identities in Vault. Bind OIDC to the exact new called-workflow path and commit;
 keep recovery credentials outside the CI policy.
 
+Profiles are part of the pinned controller, not live mutable configuration.
+Release an onboarding change in this order: commit/review/test the profile and
+controller; update both literal controller checkout/verification pins and the
+contract-test pin to that reviewed code commit; publish/test the workflow commit;
+bind Vault to that exact workflow commit; then update the application's caller.
+A profile edit on `main` alone does not affect a previously pinned consumer.
+
 The current build adapter supports runtime OCI images with a Dockerfile. Other
 toolchains need a reviewed credential-free build adapter and corresponding SBOM
 validation—not arbitrary privileged caller commands. Registering a profile does
