@@ -352,7 +352,7 @@ def unpack_android(data, destination, *, coverage_report=None):
                 (destination / 'bom.json').write_bytes(raw)
                 sbom = True
             elif is_coverage:
-                if not raw.lstrip().startswith(b'<?xml') or b'<coverage' not in raw:
+                if b'<!ENTITY' in raw or ET.fromstring(raw).tag not in ['report', 'coverage']:
                     raise RuntimeError('Resolved Android coverage XML required')
                 target = destination.joinpath(*path.parts)
                 target.parent.mkdir(parents=True, exist_ok=True)

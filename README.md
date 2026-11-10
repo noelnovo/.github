@@ -1,5 +1,29 @@
 # Shared GitHub security workflow
 
+## GitLab Android adapter
+
+The existing `gitlab/dependency-track-scan.yml` entrypoint also supports registered
+Android project31 via `security/gitlab_profiles.json`. Its credential-free producer
+collects the full Gradle CycloneDX, compiled classes and genuine JaCoCo XML from
+the same pipeline into a bounded, digest-bound archive. It does not filter BOM
+dependencies. The separate pinned scanner treats those files as data, reconciles
+all three plugin settings from four own-project Vault records and checks the exact
+CE analysis against the unchanged assigned Sonar quality gate.
+
+MR candidates must contain the current target for fast-forward-only merging;
+protected pushes must match the current branch, and version tags must match current
+MAIN. GitLab's immutable external CI setting and Maintainer-only variable overrides
+are the accepted control boundary; CE does not supply independent signed external
+configuration provenance. The existing privileged/shared executor is not malicious
+code isolation. Build jobs have no scan/signing JWT; production signing uses a
+different application-owned pinned controller and a separate signing-only role.
+
+Publish reviewed controller code first, then pin it in the generic YAML and publish
+the workflow commit. Consumers pin the workflow commit and their operator-owned
+external entrypoint. Existing GitHub callers and Prompt's immutable pins remain
+unchanged. Passing unit tests alone is not proof of actual Android CI/Vault/quality
+gate acceptance or release publication.
+
 `.github/workflows/dependency-track-scan.yml` is the single reusable security
 entrypoint. It builds the exact PR merge candidate without credentials, generates
 a runtime-image CycloneDX SBOM, waits for Dependency-Track, and evaluates the

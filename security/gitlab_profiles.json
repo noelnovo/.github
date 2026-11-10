@@ -1,4 +1,23 @@
 {
+  "31": {
+    "repository": "downops/wallet-tracker-android",
+    "targets": ["dev", "main"],
+    "adapter": "android",
+    "instance": "instance-005",
+    "roles": {
+      "merge_request_event": "security-ci-android-gitlab-mr",
+      "push": "security-ci-android-gitlab-push"
+    },
+    "sources": "app/src/main,ci,scripts",
+    "tests": "app/src/test,tests",
+    "coverage_report": "app/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml",
+    "sonar_properties": {
+      "sonar.java.binaries": "app/build",
+      "sonar.exclusions": "**/__pycache__/**,ci/test_*.py",
+      "sonar.coverage.jacoco.xmlReportPaths": "app/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml",
+      "sonar.coverage.exclusions": "app/src/main/java/win/downops/wallettracker/ui/**,app/src/main/java/win/downops/wallettracker/MainActivity.kt,app/src/main/java/win/downops/wallettracker/v2/WalletActivity.kt,app/src/main/java/win/downops/wallettracker/v2/BillEditor.kt,app/src/main/java/win/downops/wallettracker/v2/WalletDesign.kt,app/src/main/java/win/downops/wallettracker/v2/DeviceVault.kt,app/src/main/java/win/downops/wallettracker/v2/FinanceStore.kt,app/src/main/java/win/downops/wallettracker/v2/WalletModel.kt,app/src/main/java/win/downops/wallettracker/v2/LegacyUpgrade.kt,app/src/main/java/win/downops/wallettracker/v2/FinanceApi.kt,app/src/main/java/win/downops/wallettracker/util/**,app/src/main/java/win/downops/wallettracker/WalletTrackerApplication.kt"
+    }
+  },
   "10": {
     "repository": "downops/prompt-gateway",
     "targets": ["main"],
