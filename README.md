@@ -139,3 +139,73 @@ Validate the workflows with actionlint and real hosted runs. Older actionlint
 schemas need only the narrowly documented `queue` diagnostic ignored, not other
 validation disabled. Never merge an unreviewed pin, weaken a quality gate, or
 claim branch enforcement solely from a visible workflow/check.
+
+## GitLab generic pipeline (same service/plugin gate, different platform adapter)
+
+`gitlab/dependency-track-scan.yml` is the reusable GitLab template. It uses
+`security/gitlab_gate.py` and the existing shared `security_gate.py` service
+implementation: runtime-image CycloneDX, DT processing-token completion,
+job-time plugin settings reconciliation, then exact-analysis Sonar quality gate.
+No alternate CVE threshold, dependency filtering or suppression is introduced.
+
+### Register a repository
+
+1. Register its numeric project ID, exact path, allowed target branches, source/
+   test directories and service instance in `security/gitlab_profiles.json`.
+2. Provision four distinct canonical Vault records: DT uploader, Sonar project
+   analysis token, own-project read-only DT plugin reader and project-settings
+   token. Keep the settings account recovery password outside the CI policy.
+3. Give the CI policy only those four reads and self-revocation. Create separate
+   short-lived GitLab JWT roles for same-project MR events and protected pushes,
+   binding issuer/audience/project ID/path/namespace/event; push also binds ref
+   and protected branch. Never make inherited static Vault credentials available
+   to an unprotected MR. Do not copy another project's service keys.
+4. Commit and test the profile/controller, then set the template's literal
+   `SECURITY_CONTROL_SHA` to that reviewed code SHA in a second commit. Publish
+   both commits before configuring consumers. GitHub consumers keep their own
+   immutable pins and are not changed by this addition.
+5. Add a reviewed wrapper like `gitlab/prompt-gateway.yml`. Declare stages
+   including `test` and `security`, retain required tests, and make publication
+   depend on `security`. Any included delivery configuration must also be pinned.
+6. Pin GitLab's **project CI configuration setting** to
+   `gitlab/<wrapper>.yml@downops/github-workflows:<40-character-template-SHA>`.
+   The source `.gitlab-ci.yml` may carry the same include for discoverability,
+   but an MR must not control the effective credentialed CI definition.
+7. Restrict pipeline-variable overrides to Maintainers. After real CI proof,
+   require successful pipelines, reject skipped pipelines and use fast-forward
+   merging. The candidate must already contain the current target; a target
+   change requires a rebase/new head and a fresh pipeline, not stale green reuse.
+   Preserve existing delivery-bot/direct-push controls and document their limits.
+
+### Platform limits and evidence
+
+The existing GitLab Docker executor is privileged and shared by explicit owner
+choice. Separate jobs and disposable DinD daemons keep ordinary build scripts
+out of the credentialed analysis job, but **do not isolate malicious code from
+the runner host or other jobs**. Protected-main jobs may inherit existing protected
+delivery variables. Repository writers and runner administrators remain trusted.
+No additional runner, VM, host resource change or sandbox equivalence is required
+or claimed. Use a stronger executor only as a separately authorized project.
+
+GitLab CE external CI configurations have null `ci_config_ref_uri/ci_config_sha`
+JWT claims. Vault does **not** cryptographically bind the external file SHA; the
+immutable project CI setting and Maintainer access are the control boundary.
+Maintainers able to change that setting or override CI variables are trusted.
+CI_JOB_TOKEN repository push must stay disabled; non-MR/API/trigger pipelines
+cannot substitute a green security result. Community Sonar snapshot analysis is
+serialized by project resource group, not native branch/PR decoration.
+
+The build checks exact source SHA/current target ancestry before and after the
+runtime-image build. The scan consumes only bounded BOM+receipt data from its
+explicit same-pipeline producer, binding project/pipeline/head/base/target/digest.
+It fetches source as static data, ignores source scanner properties, rejects
+links/devices, never executes repository helpers with scanner keys, and rechecks
+the candidate after analysis. Source/target moves, failed/missing producers,
+missing plugin metrics and service/auth errors fail closed. Scanner output is
+private; only fixed diagnostics and numeric gate results are logged. Tokens stay
+in environment/HTTPS bodies, not argv, URLs, artifacts or Git.
+
+Test a genuine MR gate failure and blocked merge state, an ordinary successful
+MR, a changed target, and an MR replacing its local CI file. Lint and unit tests
+alone are not proof of GitLab enforcement. Do not merge a vulnerability fixture,
+change a shared gate to make a test green or deploy/sign another application.
