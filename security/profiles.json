@@ -16,7 +16,9 @@
     "sonar_properties": {
       "sonar.tests": "app/src/test,tests",
       "sonar.java.binaries": "app/build",
-      "sonar.exclusions": "**/__pycache__/**,ci/test_*.py"
+      "sonar.exclusions": "**/__pycache__/**,ci/test_*.py",
+      "sonar.coverage.jacoco.xmlReportPaths": "app/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml",
+      "sonar.coverage.exclusions": "app/src/main/java/win/downops/wallettracker/ui/**,app/src/main/java/win/downops/wallettracker/MainActivity.kt,app/src/main/java/win/downops/wallettracker/v2/WalletActivity.kt,app/src/main/java/win/downops/wallettracker/v2/BillEditor.kt,app/src/main/java/win/downops/wallettracker/v2/WalletDesign.kt"
     },
     "build_args": {}
   },
