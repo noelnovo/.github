@@ -1,5 +1,3 @@
-successfully downloaded text file (SHA: 4eefee42cfd084bd167c26916f6ba49387049b8b)
-successfully downloaded text file (SHA: 7cad5e11b1781c70486eeadace240edb8d749b82)
 {
   "909094292": {
     "repository": "noelnovo/WalletTracker",
@@ -31,10 +29,34 @@ successfully downloaded text file (SHA: 7cad5e11b1781c70486eeadace240edb8d749b82
     "instance": "instance-002",
     "role": "security-ci-portfolio-pr-reusable",
     "sources": "src,ci,Dockerfile",
-    "coverage_sources": ["ci/patch-next-vendors.mjs", "ci/runtime-smoke.cjs"],
+    "coverage_sources": [
+      "ci/patch-next-vendors.mjs", "ci/runtime-smoke.cjs",
+      "src/components/Base.tsx", "src/components/Icon/AndroidIcon.tsx",
+      "src/components/Icon/CustomCarIcon.tsx", "src/components/Icon/DotNetIcon.tsx",
+      "src/components/Icon/DribbbleIcon.tsx", "src/components/Icon/FacebookIcon.tsx",
+      "src/components/Icon/GithubIcon.tsx", "src/components/Icon/GoIcon.tsx",
+      "src/components/Icon/Icon.tsx", "src/components/Icon/InstagramIcon.tsx",
+      "src/components/Icon/LinkedInIcon.tsx", "src/components/Icon/PythonIcon.tsx",
+      "src/components/Icon/QuoteIcon.tsx", "src/components/Icon/StackOverflowIcon.tsx",
+      "src/components/Icon/TwitterIcon.tsx", "src/components/Icon/TypeScriptIcon.tsx",
+      "src/components/Icon/WebSiteIcon.tsx", "src/components/Layout/Page.tsx",
+      "src/components/Layout/Section.tsx", "src/components/Sections/About.tsx",
+      "src/components/Sections/Contact/ContactForm.tsx", "src/components/Sections/Contact/index.tsx",
+      "src/components/Sections/Footer.tsx", "src/components/Sections/Header.tsx",
+      "src/components/Sections/Hero.tsx", "src/components/Sections/Portfolio.tsx",
+      "src/components/Sections/Resume/ResumeSection.tsx", "src/components/Sections/Resume/TimelineItem.tsx",
+      "src/components/Sections/Resume/index.tsx", "src/components/Socials.tsx", "src/config.ts",
+      "src/data/data.tsx", "src/data/dataDef.ts", "src/types.d.ts",
+      "src/hooks/useDetectOutsideClick.ts", "src/hooks/useInterval.ts",
+      "src/hooks/useNavObserver.tsx", "src/pages/_app.tsx", "src/pages/_document.tsx",
+      "src/pages/api/contact.ts", "src/pages/index.tsx"
+    ],
+    "python_sources": ["ci/portfolio_delivery.py", "ci/vault-oidc-probe.py"],
     "sonar_properties": {
       "sonar.javascript.lcov.reportPaths": "coverage/lcov.info",
-      "sonar.test.inclusions": "ci/test_*.py,ci/test_*.cjs",
+      "sonar.python.coverage.reportPaths": "coverage/python.xml",
+      "sonar.tests": "ci,tests",
+      "sonar.test.inclusions": "ci/test_*.py,ci/test_*.cjs,tests/**",
       "sonar.exclusions": "**/__pycache__/**,ci/test_*.py,ci/test_*.cjs"
     },
     "build_args": {}
@@ -46,6 +68,14 @@ successfully downloaded text file (SHA: 7cad5e11b1781c70486eeadace240edb8d749b82
     "instance": "instance-003",
     "role": "security-ci-blog-pr-reusable",
     "sources": "assets,layouts,ci,Dockerfile",
+    "coverage_sources": ["assets/js/lightbox.js"],
+    "python_sources": ["ci/vault-renew-only.py"],
+    "sonar_properties": {
+      "sonar.tests": "tests",
+      "sonar.test.inclusions": "tests/**",
+      "sonar.javascript.lcov.reportPaths": "coverage/lcov.info",
+      "sonar.python.coverage.reportPaths": "coverage/python.xml"
+    },
     "build_args": {
       "dev": {"HUGO_BASEURL": "https://blog.int.downops.win/"},
       "main": {"HUGO_BASEURL": "https://blog.noelnovo.dev/"}

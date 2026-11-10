@@ -124,8 +124,11 @@ class SecurityTests(unittest.TestCase):
             'SONAR_HOST_URL': 'https://sonar.example.test', 'SONAR_PROJECT_KEY': 'android'}
         reader = {'DT_URL': 'https://dt.example.test', 'DT_PROJECT_UUID': 'project',
                   'DT_API_KEY': 'synthetic-read-only-key'}
-        expected = [{'metric': 'new_dependencytrack_fixed_medium', 'op': 'GT', 'error': '2'}]
-        responses = [{}, {}, {}, {'qualityGate': {'name': 'Configured by owner'}}, {'conditions': expected}]
+        expected = [{'metric': prefix + severity, 'op': 'GT', 'error': '2'}
+                    for prefix in ['new_dependencytrack_fixed_', 'dependencytrack_fixed_']
+                    for severity in ['critical', 'high', 'medium', 'low']]
+        responses = [{}, {}, {}, {'qualityGate': {'name': 'Configured by owner'}},
+                     {'conditions': expected + [{'metric': 'coverage', 'op': 'LT', 'error': '80'}]}]
         with patch.object(gate, 'request', side_effect=responses) as request:
             self.assertEqual(gate.synchronize_plugin(settings, reader), expected)
         calls = request.call_args_list
@@ -144,7 +147,7 @@ class SecurityTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 gate.synchronize_plugin(settings, reader)
 
-    def verify_plugin(self, conditions, status='OK', task_project='android', expected=None):
+    def verify_plugin(self, conditions, status='OK', task_project='android', expected=None, task_status='SUCCESS'):
         settings = {'SONAR_SETTINGS_TOKEN': 'synthetic', 'SONAR_HOST_URL': 'https://sonar.example.test',
                     'SONAR_PROJECT_KEY': 'android'}
         if expected is None:
@@ -153,7 +156,7 @@ class SecurityTests(unittest.TestCase):
             root = pathlib.Path(directory)
             (root / '.scannerwork').mkdir()
             (root / '.scannerwork/report-task.txt').write_text('ceTaskId=exact-task\n')
-            responses = [{'task': {'status': 'SUCCESS', 'componentKey': task_project, 'analysisId': 'exact-analysis'}},
+            responses = [{'task': {'status': task_status, 'componentKey': task_project, 'analysisId': 'exact-analysis'}},
                          {'projectStatus': {'status': status, 'conditions': conditions}}]
             with patch.object(gate, 'ROOT', root), patch.object(gate, 'request', side_effect=responses) as request:
                 result = gate.verify_plugin_gate(settings, expected)
@@ -176,6 +179,37 @@ class SecurityTests(unittest.TestCase):
     def test_other_project_cannot_supply_plugin_evidence(self):
         with self.assertRaises(RuntimeError):
             self.verify_plugin([], task_project='another-project')
+
+    def test_overall_metrics_are_mandatory_numeric_exact_analysis_evidence(self):
+        for severity in ['critical', 'high', 'medium', 'low']:
+            metric = 'dependencytrack_fixed_' + severity
+            expected = [{'metric': metric, 'op': 'GT', 'error': '2'}]
+            valid = {'metricKey': metric, 'comparator': 'GT', 'actualValue': '0',
+                     'errorThreshold': '2', 'status': 'OK'}
+            self.assertTrue(self.verify_plugin([valid], expected=expected))
+            for conditions in [[], [dict(valid, actualValue='NaN')],
+                               [dict(valid, actualValue='not-a-number')],
+                               [dict(valid, errorThreshold='3')],
+                               [dict(valid, status='NO_VALUE')],
+                               [dict(valid, comparator='LT')]]:
+                with self.assertRaises((RuntimeError, ArithmeticError)):
+                    self.verify_plugin(conditions, expected=expected)
+            # Even an inconsistent aggregate OK cannot hide an ERROR condition.
+            self.assertFalse(self.verify_plugin([dict(valid, actualValue='3', status='ERROR')], expected=expected))
+            with self.assertRaises(RuntimeError):
+                self.verify_plugin([valid], expected=expected, task_status='PENDING')
+            with self.assertRaises(RuntimeError):
+                self.verify_plugin([valid], expected=expected, task_project='stale-project')
+
+    def test_scanner_discards_stale_task_before_running(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory); (root / '.scannerwork').mkdir()
+            report = root / '.scannerwork/report-task.txt'; report.write_text('ceTaskId=stale')
+            def scanner(*args, **kwargs):
+                self.assertFalse(report.exists())
+                return subprocess.CompletedProcess([], 1, stdout=b'', stderr=b'')
+            with patch.object(gate, 'ROOT', root), patch.object(gate.subprocess, 'run', side_effect=scanner):
+                self.assertFalse(gate.sonar({'SONAR_TOKEN': 'synthetic', 'SONAR_HOST_URL': 'https://sonar.example', 'SONAR_PROJECT_KEY': 'project'}))
 
     def test_redirects_refused(self):
         self.assertIsNone(gate.NoRedirect().redirect_request(None, None, None, None, None, None))

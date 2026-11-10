@@ -208,7 +208,8 @@ def synchronize_plugin(settings, reader):
         + urllib.parse.urlencode({'project': project}))['qualityGate']
     details = sonar_request(settings, '/api/qualitygates/show?'
         + urllib.parse.urlencode({'name': gate['name']}))
-    expected = [c for c in details['conditions'] if c['metric'].startswith('new_dependencytrack_')]
+    expected = [c for c in details['conditions']
+        if c['metric'].startswith(('new_dependencytrack_', 'dependencytrack_'))]
     if not expected:
         raise RuntimeError('The assigned Sonar quality gate has no Dependency-Track conditions')
     print(json.dumps({'sonar_plugin_settings_synchronized': True,
@@ -242,7 +243,7 @@ def verify_plugin_gate(settings, expected):
             'status': condition['status']})
     print(json.dumps({'dependencytrack_metrics_evaluated': True,
         'sonar_quality_gate_status': status['status'], 'dependencytrack_conditions': diagnostics}))
-    return status['status'] == 'OK'
+    return status['status'] == 'OK' and all(c['status'] == 'OK' for c in diagnostics)
 
 
 def sonar(creds):

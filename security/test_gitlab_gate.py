@@ -75,5 +75,28 @@ class GitLabGateTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):subject.evaluate({}, root)
                 login.assert_not_called()
 
+    def test_missing_coverage_and_changed_digest_fail_before_credentials(self):
+        cfg = {'coverage_sources': ['app/static/token.js'], 'python_sources': ['app/auth.py']}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); out = root/'security-output'; out.mkdir()
+            raw = b'{"bomFormat":"CycloneDX","components":[{"name":"example"}]}'
+            (out/'bom.json').write_bytes(raw); (out/'receipt.json').write_text('{}')
+            with patch.object(subject, 'candidate', return_value={'pipeline':'9'}), patch.object(subject, 'credentials') as login:
+                with self.assertRaises(RuntimeError):subject.evaluate(cfg, root)
+                (out/'lcov.info').write_bytes(b'original'); (out/'python.xml').write_bytes(b'original')
+                receipt = {'pipeline':'9', 'bom_sha256':subject.validate_bom(raw), 'coverage':subject.coverage_receipt(cfg, out)}
+                (out/'receipt.json').write_text(json.dumps(receipt))
+                (out/'python.xml').write_bytes(b'changed')
+                with self.assertRaises(RuntimeError):subject.evaluate(cfg, root)
+                login.assert_not_called()
+
+    def test_coverage_symlinks_and_size_bound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root/'retained').write_bytes(b'x')
+            (root/'python.xml').symlink_to(root/'retained')
+            with self.assertRaises(RuntimeError):subject.coverage_receipt({'python_sources':['app/auth.py']}, root)
+            (root/'python.xml').unlink(); (root/'python.xml').write_bytes(b'x'*(2*1024*1024+1))
+            with self.assertRaises(RuntimeError):subject.coverage_receipt({'python_sources':['app/auth.py']}, root)
+
 
 if __name__ == '__main__':unittest.main()

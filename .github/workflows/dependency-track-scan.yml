@@ -1,5 +1,3 @@
-successfully downloaded text file (SHA: ce5df62babe55666c80253747dde143b687ebca7)
-successfully downloaded text file (SHA: 5ef7a153934a081be9b458e995f0955ac904ea07)
 name: Reusable security - Dependency-Track and SonarQube
 # Single security entrypoint. Repository-specific settings are reviewed in
 # security/profiles.json, not supplied by PR-controlled inputs or static secrets.
@@ -32,13 +30,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: noelnovo/.github
-          ref: 2bb463725c5100d403280a801e1a428a746be453
+          ref: 55e51eba0db3851786f8928f6eafde1ac2b232fb
           path: security-control
           persist-credentials: false
       - id: context
         run: python3 security-control/security/premerge.py context
         env:
-          SECURITY_CONTROL_SHA: 2bb463725c5100d403280a801e1a428a746be453
+          SECURITY_CONTROL_SHA: 55e51eba0db3851786f8928f6eafde1ac2b232fb
           GITHUB_TOKEN: ${{ github.token }}
 
   build:
@@ -75,7 +73,7 @@ jobs:
           docker run --rm --volume "$PWD:/work:ro" \
             anchore/syft@sha256:03215d0e98b661d0ecbc8575dbc14d65be1743b5de5df6410aecb7e80f95b060 \
             docker-archive:/work/security-image.tar -o cyclonedx-json > bom.json
-      - name: Export genuine same-candidate JavaScript coverage without credentials
+      - name: Export genuine same-candidate coverage without credentials
         if: needs.candidate.outputs.adapter == 'image' && needs.candidate.outputs.coverage_format == 'lcov'
         run: docker build --target security-coverage --output type=local,dest=coverage .
       - uses: actions/setup-java@v4
@@ -110,6 +108,7 @@ jobs:
           path: |
             bom.json
             coverage/lcov.info
+            coverage/python.xml
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@v4
@@ -146,13 +145,13 @@ jobs:
         with:
           # Literal reviewed code pin, never a caller-provided ref or PR script.
           repository: noelnovo/.github
-          ref: 2bb463725c5100d403280a801e1a428a746be453
+          ref: 55e51eba0db3851786f8928f6eafde1ac2b232fb
           path: security-control
           persist-credentials: false
       - name: Evaluate updated Dependency-Track metrics through SonarQube
         run: python3 security-control/security/premerge.py gate
         env:
-          SECURITY_CONTROL_SHA: 2bb463725c5100d403280a801e1a428a746be453
+          SECURITY_CONTROL_SHA: 55e51eba0db3851786f8928f6eafde1ac2b232fb
           SECURITY_BUILD_RESULT: ${{ needs.build.result }}
           SECURITY_CANDIDATE: ${{ needs.candidate.outputs.candidate }}
           GITHUB_TOKEN: ${{ github.token }}

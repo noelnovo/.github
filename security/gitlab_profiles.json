@@ -8,6 +8,12 @@
       "push": "security-ci-prompt-push-generic"
     },
     "sources": "app,Dockerfile",
-    "tests": "tests"
+    "tests": "tests",
+    "coverage_sources": ["app/static/token.js"],
+    "python_sources": ["app/__init__.py", "app/auth.py", "app/config.py", "app/main.py", "app/mcp_server.py", "app/opencode.py", "app/schema.py", "app/security.py", "app/store.py"],
+    "sonar_properties": {
+      "sonar.python.coverage.reportPaths": "coverage/python.xml",
+      "sonar.javascript.lcov.reportPaths": "coverage/lcov.info"
+    }
   }
 }
