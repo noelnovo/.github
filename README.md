@@ -191,8 +191,10 @@ GitLab CE external CI configurations have null `ci_config_ref_uri/ci_config_sha`
 JWT claims. Vault does **not** cryptographically bind the external file SHA; the
 immutable project CI setting and Maintainer access are the control boundary.
 Maintainers able to change that setting or override CI variables are trusted.
-CI_JOB_TOKEN repository push must stay disabled; non-MR/API/trigger pipelines
-cannot substitute a green security result. Community Sonar snapshot analysis is
+CI_JOB_TOKEN repository push must stay disabled. The workflow rejects normal
+API/trigger sources; external-status publishing and administrative bypass rights
+are NOT independently constrained by this template or tested as a hostile-actor
+boundary. Community Sonar snapshot analysis is
 serialized by project resource group, not native branch/PR decoration.
 
 The build checks exact source SHA/current target ancestry before and after the
