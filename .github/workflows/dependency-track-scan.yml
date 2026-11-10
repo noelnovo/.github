@@ -1,214 +1,103 @@
-name: CycloneDX -> Dependency-Track scan (reusable)
-
-# Generic, toolchain-agnostic reusable workflow.
-#
-# It does ONE thing: take an already-generated CycloneDX SBOM (delivered as a
-# workflow artifact by the caller), push it to OWASP Dependency-Track, and wait
-# until DT finishes analysing it. The caller then runs the SonarQube quality gate
-# afterwards, because SonarQube's dependency-track plugin proxies the live DT
-# findings at scan time.
-#
-# SBOM *generation* is intentionally NOT here: it is toolchain-specific and lives
-# in each product's own workflow. Python -> Syft, .NET -> cyclonedx-dotnet/dotnet
-# CycloneDX, Node -> cyclonedx-npm, etc.
-#
-# Dependency-Track target is parameterised so ONE workflow serves many projects:
-#   - dt-url          (input)  DT instance base URL
-#   - dt-project-uuid (input)  the DT project to upload the analysis to
-#   - DT_API_KEY      (secret) the API key for that project
-# If any of them is omitted, the values are read from Vault instead
-# (vault-secret-path -> DT_URL / DT_PROJECT_UUID / DT_API_KEY). Explicit values
-# always win over Vault, so a caller can override just the project id.
-#
-#   dependency-track:
-#     needs: [sbom]
-#     uses: noelnovo/.github/.github/workflows/dependency-track-scan.yml@main
-#     with:
-#       sbom-artifact-name: sbom
-#       dt-url: ${{ vars.DT_URL }}
-#       dt-project-uuid: ${{ vars.DT_PROJECT_UUID }}
-#     secrets:
-#       DT_API_KEY: ${{ secrets.DT_API_KEY }}
-#       # or reuse Vault: vault-secret-path + VAULT_TOKEN (see inputs)
-#
-# Cross-repo reusable workflows require this repository to be readable by the
-# caller's token, so it is public.
-
+name: Reusable security - Dependency-Track and SonarQube
+# Single security entrypoint. Repository-specific settings are reviewed in
+# security/profiles.json, not supplied by PR-controlled inputs or static secrets.
+# Existing immutable older commits remain usable during the caller migration.
 on:
   workflow_call:
-    inputs:
-      sbom-artifact-name:
-        description: Name of the workflow artifact that contains the CycloneDX SBOM (uploaded by the caller).
-        required: true
-        type: string
-      sbom-filename:
-        description: File name of the CycloneDX SBOM inside the artifact.
-        required: false
-        type: string
-        default: "bom.json"
-      dt-url:
-        description: Dependency-Track base URL (e.g. https://dt.downops.win). Overrides Vault when set.
-        required: false
-        type: string
-        default: ""
-      dt-project-uuid:
-        description: Dependency-Track project UUID to upload the analysis to. Overrides Vault when set.
-        required: false
-        type: string
-        default: ""
-      vault-url:
-        description: HashiCorp Vault base URL (used only when reading DT settings from Vault).
-        required: false
-        type: string
-        default: "https://vault.downops.win"
-      vault-secret-path:
-        description: Vault KV path holding DT_URL / DT_PROJECT_UUID / DT_API_KEY, used when the explicit inputs/secrets are not set.
-        required: false
-        type: string
-        default: ""
-      dt-analysis-timeout-attempts:
-        description: Max polling attempts (x5s) while waiting for Dependency-Track to finish analysing the BOM.
-        required: false
-        type: number
-        default: 60
-      runs-on:
-        description: Runner label.
-        required: false
-        type: string
-        default: "ubuntu-latest"
-    secrets:
-      DT_API_KEY:
-        description: Dependency-Track API key for the target project. Overrides Vault when set.
-        required: false
-      VAULT_TOKEN:
-        description: Vault token, used only when reading DT settings from Vault.
-        required: false
-    outputs:
-      bom-token:
-        description: Dependency-Track BOM token for this upload.
-        value: ${{ jobs.scan.outputs.bom-token }}
-
 permissions:
   contents: read
-
+concurrency:
+  group: reusable-security-${{ github.repository_id }}-${{ github.event.pull_request.number }}
+  queue: max
+  cancel-in-progress: false
 jobs:
-  scan:
-    runs-on: ${{ inputs.runs-on }}
+  candidate:
+    name: Candidate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
-      bom-token: ${{ steps.sbom.outputs.bom-token }}
+      candidate: ${{ steps.context.outputs.candidate }}
+      hugo_baseurl: ${{ steps.context.outputs.hugo_baseurl }}
     steps:
-      - name: Download CycloneDX SBOM artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
         with:
-          name: ${{ inputs.sbom-artifact-name }}
-
-      - name: Fetch Dependency-Track settings from Vault (fallback)
-        if: ${{ inputs.vault-secret-path != '' }}
-        uses: hashicorp/vault-action@v4
-        with:
-          url: ${{ inputs.vault-url }}
-          token: ${{ secrets.VAULT_TOKEN }}
-          secrets: |
-            ${{ inputs.vault-secret-path }} DT_URL ;
-            ${{ inputs.vault-secret-path }} DT_PROJECT_UUID ;
-            ${{ inputs.vault-secret-path }} DT_API_KEY
-
-      - name: Resolve Dependency-Track settings
+          repository: noelnovo/.github
+          ref: 932d5c69b89b8111a513bb45c97aa7726dc470b8
+          path: security-control
+          persist-credentials: false
+      - id: context
+        run: python3 security-control/security/premerge.py context
         env:
-          IN_DT_URL: ${{ inputs.dt-url }}
-          IN_DT_PROJECT_UUID: ${{ inputs.dt-project-uuid }}
-          IN_DT_API_KEY: ${{ secrets.DT_API_KEY }}
-        run: |
-          # Explicit inputs/secrets win; otherwise fall back to the Vault values.
-          DT_URL="${IN_DT_URL:-$DT_URL}"
-          DT_PROJECT_UUID="${IN_DT_PROJECT_UUID:-$DT_PROJECT_UUID}"
-          DT_API_KEY="${IN_DT_API_KEY:-$DT_API_KEY}"
-          missing=""
-          [ -n "$DT_URL" ] || missing="$missing dt-url"
-          [ -n "$DT_PROJECT_UUID" ] || missing="$missing dt-project-uuid"
-          [ -n "$DT_API_KEY" ] || missing="$missing DT_API_KEY"
-          if [ -n "$missing" ]; then
-            echo "::error::Missing Dependency-Track settings:$missing (pass them as inputs/secrets, or set vault-secret-path)"
-            exit 1
-          fi
-          echo "DT_URL=$DT_URL" >> "$GITHUB_ENV"
-          echo "DT_PROJECT_UUID=$DT_PROJECT_UUID" >> "$GITHUB_ENV"
-          echo "DT_API_KEY=$DT_API_KEY" >> "$GITHUB_ENV"
-          echo "Resolved DT target: url=$DT_URL project=$DT_PROJECT_UUID (api key: set)."
+          SECURITY_CONTROL_SHA: 932d5c69b89b8111a513bb45c97aa7726dc470b8
+          GITHUB_TOKEN: ${{ github.token }}
 
-      - name: Validate CycloneDX SBOM
+  build:
+    name: Build and SBOM
+    needs: candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Executes untrusted Dockerfile/build code on its own hosted VM. No Vault,
+    # OIDC, registry login, scanner key, status write or environment secrets.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.candidate.outputs.candidate }}
+          persist-credentials: false
+      - name: Build candidate without credentials
+        env:
+          SOURCE_CANDIDATE: ${{ needs.candidate.outputs.candidate }}
+          HUGO_BASEURL: ${{ needs.candidate.outputs.hugo_baseurl }}
         run: |
-          SBOM="${{ inputs.sbom-filename }}"
-          if [ ! -f "$SBOM" ]; then
-            echo "::error::CycloneDX SBOM not found: $SBOM (artifact: ${{ inputs.sbom-artifact-name }})"
-            ls -la
-            exit 1
-          fi
-          if jq -e '.bomFormat == "CycloneDX"' "$SBOM" >/dev/null; then
-            echo "Valid CycloneDX SBOM (components: $(jq '.components | length' "$SBOM"))."
-          else
-            echo "::error::$SBOM is not a CycloneDX document"
-            exit 1
-          fi
-
-      - name: Submit SBOM to Dependency-Track
-        id: sbom
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_CANDIDATE"
+          args=()
+          if [ -n "$HUGO_BASEURL" ]; then args+=(--build-arg "HUGO_BASEURL=$HUGO_BASEURL"); fi
+          docker build --label "org.opencontainers.image.revision=$SOURCE_CANDIDATE" \
+            "${args[@]}" -t security-candidate:ci .
+          docker save -o security-image.tar security-candidate:ci
+      - name: Generate resolved runtime-image CycloneDX SBOM
         run: |
-          BODY_FILE=$(mktemp)
-          jq -n --arg project "$DT_PROJECT_UUID" --rawfile bom "${{ inputs.sbom-filename }}" \
-            '{project: $project, bom: ($bom | @base64)}' > "$BODY_FILE"
-          HTTP_RESPONSE=$(mktemp)
-          HTTP_STATUS=$(curl -sS --max-time 120 -X PUT "$DT_URL/api/v1/bom" \
-            -H "Content-Type: application/json" \
-            -H "X-Api-Key: $DT_API_KEY" \
-            -d @"$BODY_FILE" \
-            -w "%{http_code}" \
-            -o "$HTTP_RESPONSE") || true
-          rm -f "$BODY_FILE"
+          docker run --rm --volume "$PWD:/work:ro" \
+            anchore/syft@sha256:03215d0e98b661d0ecbc8575dbc14d65be1743b5de5df6410aecb7e80f95b060 \
+            docker-archive:/work/security-image.tar -o cyclonedx-json > bom.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: security-bom-${{ needs.candidate.outputs.candidate }}-${{ github.run_attempt }}
+          path: bom.json
+          if-no-files-found: error
+          retention-days: 7
 
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "::error::Dependency Track returned HTTP $HTTP_STATUS"
-            cat "$HTTP_RESPONSE" || echo "(empty)"
-            rm -f "$HTTP_RESPONSE"
-            exit 1
-          fi
-          BOM_TOKEN=$(jq -r '.token' "$HTTP_RESPONSE" 2>/dev/null || echo "")
-          rm -f "$HTTP_RESPONSE"
-          if [ -z "$BOM_TOKEN" ] || [ "$BOM_TOKEN" = "null" ]; then
-            echo "::error::Failed to extract BOM token from DT response"
-            exit 1
-          fi
-          echo "SBOM uploaded, BOM token: $BOM_TOKEN"
-          echo "bom-token=$BOM_TOKEN" >> "$GITHUB_OUTPUT"
-
-      - name: Wait for Dependency-Track analysis
-        run: |
-          # Dependency Track processes the BOM asynchronously. The caller's
-          # SonarQube job must run only after this finishes.
-          BOM_TOKEN="${{ steps.sbom.outputs.bom-token }}"
-          MAX_ATTEMPTS=${{ inputs.dt-analysis-timeout-attempts }}
-          ATTEMPT=0
-          while [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; do
-            ATTEMPT=$((ATTEMPT + 1))
-            STATUS_JSON=$(curl -sS -H "X-Api-Key: $DT_API_KEY" \
-              "$DT_URL/api/v1/bom/token/$BOM_TOKEN" 2>/dev/null || echo "")
-            PROCESSING=$(echo "$STATUS_JSON" | jq -r '.processing' 2>/dev/null || echo "")
-            if [ "$PROCESSING" = "false" ]; then
-              echo "DT analysis complete after $ATTEMPT attempt(s)."
-              break
-            fi
-            if [ "$ATTEMPT" -eq "$MAX_ATTEMPTS" ]; then
-              echo "::error::DT analysis did not complete within timeout. Last response:"
-              echo "$STATUS_JSON" || true
-              exit 1
-            fi
-            sleep 5
-          done
-
-      - name: Show Dependency-Track findings
-        run: |
-          echo "--- DT findings for project $DT_PROJECT_UUID ---"
-          curl -sS -H "X-Api-Key: $DT_API_KEY" \
-            "$DT_URL/api/v1/finding/project/$DT_PROJECT_UUID" \
-            | jq -r '.[] | "- [\(.vulnerability.severity)] \(.component.name)@\(.component.version): \(.vulnerability.vulnId)"' \
-            | head -50 || true
+  quality-gate:
+    name: SonarQube + Dependency-Track (${{ github.base_ref }})
+    if: always()
+    needs: [candidate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: sonar-dtrack-analysis-${{ github.repository_id }}
+      queue: max
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Literal reviewed code pin, never a caller-provided ref or PR script.
+          repository: noelnovo/.github
+          ref: 932d5c69b89b8111a513bb45c97aa7726dc470b8
+          path: security-control
+          persist-credentials: false
+      - name: Evaluate updated Dependency-Track metrics through SonarQube
+        run: python3 security-control/security/premerge.py gate
+        env:
+          SECURITY_CONTROL_SHA: 932d5c69b89b8111a513bb45c97aa7726dc470b8
+          SECURITY_BUILD_RESULT: ${{ needs.build.result }}
+          SECURITY_CANDIDATE: ${{ needs.candidate.outputs.candidate }}
+          GITHUB_TOKEN: ${{ github.token }}
