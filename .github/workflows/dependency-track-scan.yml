@@ -25,17 +25,18 @@ jobs:
       reuse_android: ${{ steps.context.outputs.reuse_android }}
       target: ${{ steps.context.outputs.target }}
       analysis_group: ${{ steps.context.outputs.analysis_group }}
+      coverage_format: ${{ steps.context.outputs.coverage_format }}
     steps:
       - uses: actions/checkout@v4
         with:
           repository: noelnovo/.github
-          ref: d07320d44279f15bdeb50eb403118fd1f7442bda
+          ref: e254078ff2ae582aa42842bc0f1017519cce8579
           path: security-control
           persist-credentials: false
       - id: context
         run: python3 security-control/security/premerge.py context
         env:
-          SECURITY_CONTROL_SHA: d07320d44279f15bdeb50eb403118fd1f7442bda
+          SECURITY_CONTROL_SHA: e254078ff2ae582aa42842bc0f1017519cce8579
           GITHUB_TOKEN: ${{ github.token }}
 
   build:
@@ -72,6 +73,9 @@ jobs:
           docker run --rm --volume "$PWD:/work:ro" \
             anchore/syft@sha256:03215d0e98b661d0ecbc8575dbc14d65be1743b5de5df6410aecb7e80f95b060 \
             docker-archive:/work/security-image.tar -o cyclonedx-json > bom.json
+      - name: Export genuine same-candidate JavaScript coverage without credentials
+        if: needs.candidate.outputs.adapter == 'image' && needs.candidate.outputs.coverage_format == 'lcov'
+        run: docker build --target security-coverage --output type=local,dest=coverage .
       - uses: actions/setup-java@v4
         if: needs.candidate.outputs.adapter == 'android' && needs.candidate.outputs.reuse_android != 'true'
         with:
@@ -101,7 +105,9 @@ jobs:
         if: needs.candidate.outputs.adapter == 'image'
         with:
           name: security-bom-${{ needs.candidate.outputs.candidate }}-${{ github.run_attempt }}
-          path: bom.json
+          path: |
+            bom.json
+            coverage/lcov.info
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@v4
@@ -137,13 +143,13 @@ jobs:
         with:
           # Literal reviewed code pin, never a caller-provided ref or PR script.
           repository: noelnovo/.github
-          ref: d07320d44279f15bdeb50eb403118fd1f7442bda
+          ref: e254078ff2ae582aa42842bc0f1017519cce8579
           path: security-control
           persist-credentials: false
       - name: Evaluate updated Dependency-Track metrics through SonarQube
         run: python3 security-control/security/premerge.py gate
         env:
-          SECURITY_CONTROL_SHA: d07320d44279f15bdeb50eb403118fd1f7442bda
+          SECURITY_CONTROL_SHA: e254078ff2ae582aa42842bc0f1017519cce8579
           SECURITY_BUILD_RESULT: ${{ needs.build.result }}
           SECURITY_CANDIDATE: ${{ needs.candidate.outputs.candidate }}
           GITHUB_TOKEN: ${{ github.token }}

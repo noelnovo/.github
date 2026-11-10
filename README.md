@@ -66,6 +66,18 @@ Branch enforcement is separately configured by the repository owner.
 Shared workflow and per-project analysis queues use `queue: max`; their group
 names are stable across old/new pins so migrations cannot race shared DT state.
 
+Image profiles can declare reviewed `coverage_sources` and trusted Sonar LCOV
+settings. The credential-free image build runs real tests and exports
+`coverage/lcov.info` through the Dockerfile's `security-coverage` stage. SBOM
+and coverage travel in the SAME immutable candidate/run/attempt/digest-verified
+artifact. Private analysis accepts only the expected BOM/report files, bounded
+regular inputs, exact reviewed source paths present in the fetched candidate,
+valid line/count data and all required source records. Only fixed `/app/` path
+mapping is allowed; hit counts are never changed. Missing/invalid coverage fails
+closed before scanning. No test/build command executes with scanner secrets,
+no fabricated report or production-code coverage exclusion is added. Test-only
+files are explicitly classified as tests in the reviewed profile.
+
 ## Register another product
 
 Review a profile in `security/profiles.json`: immutable repository ID/name,
