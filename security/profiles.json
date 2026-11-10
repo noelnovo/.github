@@ -1,3 +1,4 @@
+successfully downloaded text file (SHA: 4eefee42cfd084bd167c26916f6ba49387049b8b)
 successfully downloaded text file (SHA: 7cad5e11b1781c70486eeadace240edb8d749b82)
 {
   "909094292": {
@@ -19,7 +20,7 @@ successfully downloaded text file (SHA: 7cad5e11b1781c70486eeadace240edb8d749b82
       "sonar.java.binaries": "app/build",
       "sonar.exclusions": "**/__pycache__/**,ci/test_*.py",
       "sonar.coverage.jacoco.xmlReportPaths": "app/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml",
-      "sonar.coverage.exclusions": "app/src/main/java/win/downops/wallettracker/ui/**,app/src/main/java/win/downops/wallettracker/MainActivity.kt,app/src/main/java/win/downops/wallettracker/v2/WalletActivity.kt,app/src/main/java/win/downops/wallettracker/v2/BillEditor.kt,app/src/main/java/win/downops/wallettracker/v2/WalletDesign.kt,app/src/main/java/win/downops/wallettracker/v2/DeviceVault.kt,app/src/main/java/win/downops/wallettracker/v2/FinanceStore.kt,app/src/main/java/win/downops/wallettracker/v2/WalletModel.kt,app/src/main/java/win/downops/wallettracker/v2/LegacyUpgrade.kt,app/src/main/java/win/downops/wallettracker/v2/FinanceApi.kt,app/src/main/java/win/downops/wallettracker/util/**,app/src/main/java/win/downops/wallettracker/WalletTrackerApplication.kt"
+      "sonar.coverage.exclusions": "app/src/main/java/win/downops/wallettracker/ui/**,app/src/main/java/win/downops/wallettracker/MainActivity.kt,app/src/main/java/win/downops/wallettracker/v2/WalletActivity.kt,app/src/main/java/win/downops/wallettracker/v2/BillEditor.kt,app/src/main/java/win/downops/wallettracker/v2/WalletDesign.kt,app/src/main/java/win/downops/wallettracker/v2/DeviceVault.kt,app/src/main/java/win/downops/wallettracker/v2/FinanceStore.kt,app/src/main/java/win/downops/wallettracker/v2/WalletModel.kt,app/src/main/java/win/downops/wallettracker/v2/LegacyUpgrade.kt,app/src/main/java/win/downops/wallettracker/v2/FinanceApi.kt,app/src/main/java/win/downops/wallettracker/util/**,app/src/main/java/win/downops/wallettracker/WalletTrackerApplication.kt,app/src/main/java/win/downops/wallettracker/data/sqlite/**,app/src/main/java/win/downops/wallettracker/data/api/BaseHttpService.kt,app/src/main/java/win/downops/wallettracker/data/api/ApiClient.kt,app/src/main/java/win/downops/wallettracker/data/api/login/**,app/src/main/java/win/downops/wallettracker/data/api/expense/**,app/src/main/java/win/downops/wallettracker/data/api/season/**,app/src/main/java/win/downops/wallettracker/data/api/importe/**,app/src/main/java/win/downops/wallettracker/data/api/expenseCategory/**,app/src/main/java/win/downops/wallettracker/di/**"
     },
     "build_args": {}
   },
