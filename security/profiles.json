@@ -1,3 +1,4 @@
+successfully downloaded text file (SHA: 7cad5e11b1781c70486eeadace240edb8d749b82)
 {
   "909094292": {
     "repository": "noelnovo/WalletTracker",
@@ -18,7 +19,7 @@
       "sonar.java.binaries": "app/build",
       "sonar.exclusions": "**/__pycache__/**,ci/test_*.py",
       "sonar.coverage.jacoco.xmlReportPaths": "app/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml",
-      "sonar.coverage.exclusions": "app/src/main/java/win/downops/wallettracker/ui/**,app/src/main/java/win/downops/wallettracker/MainActivity.kt,app/src/main/java/win/downops/wallettracker/v2/WalletActivity.kt,app/src/main/java/win/downops/wallettracker/v2/BillEditor.kt,app/src/main/java/win/downops/wallettracker/v2/WalletDesign.kt"
+      "sonar.coverage.exclusions": "app/src/main/java/win/downops/wallettracker/ui/**,app/src/main/java/win/downops/wallettracker/MainActivity.kt,app/src/main/java/win/downops/wallettracker/v2/WalletActivity.kt,app/src/main/java/win/downops/wallettracker/v2/BillEditor.kt,app/src/main/java/win/downops/wallettracker/v2/WalletDesign.kt,app/src/main/java/win/downops/wallettracker/v2/DeviceVault.kt,app/src/main/java/win/downops/wallettracker/v2/FinanceStore.kt,app/src/main/java/win/downops/wallettracker/v2/WalletModel.kt,app/src/main/java/win/downops/wallettracker/v2/LegacyUpgrade.kt,app/src/main/java/win/downops/wallettracker/v2/FinanceApi.kt,app/src/main/java/win/downops/wallettracker/util/**,app/src/main/java/win/downops/wallettracker/WalletTrackerApplication.kt"
     },
     "build_args": {}
   },
