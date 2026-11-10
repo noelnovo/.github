@@ -209,3 +209,9 @@ Test a genuine MR gate failure and blocked merge state, an ordinary successful
 MR, a changed target, and an MR replacing its local CI file. Lint and unit tests
 alone are not proof of GitLab enforcement. Do not merge a vulnerability fixture,
 change a shared gate to make a test green or deploy/sign another application.
+
+If GitLab rejects OIDC with `id_token_burned_project_path`, inspect its subject
+components. Prompt uses `project_id, ref_type, ref` (no path in `sub`); Vault
+still binds the separately signed project path/ID claims. On installed CE19.5.3,
+merely prepending ID while retaining a path component did not unblock issuance.
+Do not disable global reclaimed-path protection or broaden a Vault role.

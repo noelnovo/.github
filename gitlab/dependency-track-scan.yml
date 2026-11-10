@@ -34,7 +34,7 @@ security-build:
   extends: .security-control
   stage: test
   script:
-    - python3 "$SECURITY_CONTROL_DIR/security/gitlab_gate.py" build
+    - python3 -u "$SECURITY_CONTROL_DIR/security/gitlab_gate.py" build
   artifacts:
     name: security-$CI_PIPELINE_ID-$CI_COMMIT_SHA
     expire_in: 1 day
@@ -53,4 +53,4 @@ security:
     VAULT_ID_TOKEN:
       aud: https://vault.int.downops.win
   script:
-    - python3 "$SECURITY_CONTROL_DIR/security/gitlab_gate.py" scan
+    - python3 -u "$SECURITY_CONTROL_DIR/security/gitlab_gate.py" scan
