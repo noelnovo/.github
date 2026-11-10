@@ -66,17 +66,37 @@ Branch enforcement is separately configured by the repository owner.
 Shared workflow and per-project analysis queues use `queue: max`; their group
 names are stable across old/new pins so migrations cannot race shared DT state.
 
-Image profiles can declare reviewed `coverage_sources` and trusted Sonar LCOV
-settings. The credential-free image build runs real tests and exports
-`coverage/lcov.info` through the Dockerfile's `security-coverage` stage. SBOM
+Image profiles can declare reviewed `coverage_sources`, optional `python_sources`
+and trusted Sonar report settings. The credential-free image build runs real tests
+and exports `coverage/lcov.info` and, when selected, `coverage/python.xml` through
+the Dockerfile's `security-coverage` stage (`/lcov.info` and `/python.xml`). SBOM
 and coverage travel in the SAME immutable candidate/run/attempt/digest-verified
 artifact. Private analysis accepts only the expected BOM/report files, bounded
 regular inputs, exact reviewed source paths present in the fetched candidate,
-valid line/count data and all required source records. Only fixed `/app/` path
-mapping is allowed; hit counts are never changed. Missing/invalid coverage fails
+valid line/count data and all required source records. LCOV permits fixed `/app/`
+path mapping. Python XML also permits `/srv/` and uniquely allowlisted basenames;
+its normalized filenames still refer only to actual reviewed candidate files.
+Declarations/entities, traversal, duplicates and oversized reports are rejected;
+line/hit/branch data are never invented. Missing/invalid coverage fails
 closed before scanning. No test/build command executes with scanner secrets,
 no fabricated report or production-code coverage exclusion is added. Test-only
 files are explicitly classified as tests in the reviewed profile.
+Genuine declaration-only `.d.ts` LCOV records retain their zero line/function/
+branch totals; ordinary executable sources still require actual line data.
+
+The GitLab adapter uses these same validators. Its existing same-pipeline receipt
+adds an opt-in coverage path/size/digest map, checked with project, pipeline,
+head/base/target and full BOM digest before credentials are read. Profiles without
+coverage retain their original receipt and artifact behavior. Tests remain in the
+existing credential-free producer; the credentialed job only consumes report data.
+This is not new isolation for the accepted privileged/shared GitLab executor.
+
+Gate evidence must include every assigned `new_dependencytrack_*` **and**
+`dependencytrack_*` condition for the exact completed project analysis. Missing,
+non-numeric, stale or ERROR evidence cannot produce success. Thresholds come from
+the assigned Sonar gate, never an independent hardcoded severity policy. A metric's
+`new_` name does not prove SCM-delta semantics; this controller does not compute
+such a delta or change the plugin's fixability heuristic.
 
 ## Register another product
 

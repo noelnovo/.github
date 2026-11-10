@@ -2,7 +2,7 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-CODE_PIN = 'e254078ff2ae582aa42842bc0f1017519cce8579'
+CODE_PIN = '2bb463725c5100d403280a801e1a428a746be453'
 
 
 class WorkflowContractTests(unittest.TestCase):
@@ -46,7 +46,7 @@ class WorkflowContractTests(unittest.TestCase):
     def test_android_setup_and_push_reuse_are_only_in_credential_free_build(self):
         build = self.workflow.split('\n  build:\n', 1)[1].split('\n  quality-gate:\n', 1)[0]
         gate = self.workflow.split('\n  quality-gate:\n', 1)[1]
-        self.assertIn('testDebugUnitTest cyclonedxBom', build)
+        self.assertIn('testDebugUnitTest jacocoTestReport cyclonedxBom', build)
         self.assertIn('security-input-${{ needs.candidate.outputs.candidate }}', build)
         self.assertNotIn('statuses: write', build)
         for value in ['sdkmanager', 'gradlew', 'setup-java', 'download-artifact']:

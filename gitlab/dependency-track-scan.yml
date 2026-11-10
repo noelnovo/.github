@@ -41,6 +41,8 @@ security-build:
     paths:
       - security-output/bom.json
       - security-output/receipt.json
+      - security-output/lcov.info
+      - security-output/python.xml
 
 security:
   extends: .security-control

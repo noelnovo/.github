@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import xml.etree.ElementTree as ET
 import time
 import urllib.error
 import urllib.parse
@@ -186,6 +187,7 @@ def validated_lcov(raw, destination, sources):
     allowed = {str(safe_path(name)) for name in sources}
     seen, lines = set(), []
     current, maximum, has_data = None, 0, False
+    summary = {}
     for line in raw.decode('utf-8').splitlines():
         if line.startswith('SF:'):
             if current is not None:
@@ -204,6 +206,7 @@ def validated_lcov(raw, destination, sources):
             maximum = len(source.read_bytes().splitlines())
             seen.add(current)
             has_data = False
+            summary = {}
             line = 'SF:' + current  # Path mapping only; never change hit counts.
         elif line.startswith('DA:'):
             fields = line[3:].split(',')
@@ -211,8 +214,17 @@ def validated_lcov(raw, destination, sources):
                 or not fields[1].isdigit() or not 1 <= int(fields[0]) <= maximum):
                 raise RuntimeError('Invalid LCOV source line/count')
             has_data = True
+        elif line.partition(':')[0] in ['FNF', 'FNH', 'LF', 'LH', 'BRF', 'BRH']:
+            key, _, value = line.partition(':')
+            if current is None or key in summary or not value.isdigit():
+                raise RuntimeError('Invalid LCOV record totals')
+            summary[key] = value
         elif line == 'end_of_record':
-            if current is None or not has_data:
+            # Declaration-only TypeScript has no runtime statements. Preserve its
+            # genuine zero-line record, never discard it or invent executable hits.
+            declaration = (current is not None and current.endswith('.d.ts')
+                and summary == dict.fromkeys(['FNF', 'FNH', 'LF', 'LH', 'BRF', 'BRH'], '0'))
+            if current is None or (not has_data and not declaration):
                 raise RuntimeError('LCOV record has no executable line data')
             current = None
         lines.append(line)
@@ -225,17 +237,70 @@ def validated_lcov(raw, destination, sources):
     print(json.dumps({'coverage_report_validated': True, 'source_files': len(seen)}))
 
 
-def unpack_bom(data, destination, *, coverage_sources=None):
+def validated_python_coverage(raw, destination, sources):
+    """Treat coverage.py XML as bounded scanner data, never as executable input."""
+    if len(raw) > 2 * 1024 * 1024 or any(marker in raw.upper() for marker in [b'<!DOCTYPE', b'<!ENTITY']):
+        raise RuntimeError('Python coverage exceeded bounds or contains declarations')
+    allowed = {str(safe_path(name)) for name in sources}
+    text = raw.decode('utf-8')
+    if '\x00' in text:
+        raise RuntimeError('Python coverage must use UTF-8')
+    document = ET.fromstring(text)
+    if document.tag != 'coverage':
+        raise RuntimeError('Expected coverage.py XML')
+    seen = set()
+    for entry in document.findall('./packages/package/classes/class'):
+        name = entry.get('filename', '')
+        for prefix in ['/app/', '/srv/']:
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+                break
+        name = str(safe_path(name))
+        matches = [p for p in allowed if p == name or p.rsplit('/', 1)[-1] == name]
+        if len(matches) != 1 or matches[0] in seen:
+            raise RuntimeError('Unexpected or duplicate Python coverage source')
+        name = matches[0]
+        source = destination / name
+        if not source.is_file() or source.is_symlink():
+            raise RuntimeError('Python coverage source is not regular')
+        maximum = len(source.read_bytes().splitlines())
+        lines, numbered = entry.findall('./lines/line'), set()
+        for line in lines:
+            number, hits = line.get('number', ''), line.get('hits', '')
+            if (not number.isdigit() or not hits.isdigit() or not 1 <= int(number) <= maximum
+                    or number in numbered):
+                raise RuntimeError('Invalid Python coverage source line/count')
+            numbered.add(number)
+        if not lines and maximum:
+            # Empty package initializers contain no executable statements.
+            if source.read_text().strip():
+                raise RuntimeError('Python coverage record has no line data')
+        entry.set('filename', name)  # Path mapping only; preserve real hit/branch data.
+        seen.add(name)
+    if seen != allowed:
+        raise RuntimeError('Missing Python coverage source evidence')
+    roots = document.find('sources')
+    if roots is not None:
+        roots.clear()
+        ET.SubElement(roots, 'source').text = '.'
+    report = destination / 'coverage/python.xml'
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_bytes(ET.tostring(document))
+    report.chmod(0o600)
+
+
+def unpack_bom(data, destination, *, coverage_sources=None, python_sources=None):
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         files = [m for m in archive.infolist() if not m.is_dir()]
-        expected = {'bom.json'} | ({'coverage/lcov.info'} if coverage_sources else set())
+        expected = ({'bom.json'} | ({'coverage/lcov.info'} if coverage_sources else set())
+                    | ({'coverage/python.xml'} if python_sources else set()))
         entries = {}
         for member in files:
             name = str(safe_path(member.filename))
             mode = (member.external_attr >> 16) & 0o170000
             if name not in expected or name in entries or mode not in [0, stat.S_IFREG]:
                 raise RuntimeError('Unexpected SBOM/coverage artifact entry')
-            limit = 2 * 1024 * 1024 if name.endswith('.info') else 16 * 1024 * 1024
+            limit = 16 * 1024 * 1024 if name == 'bom.json' else 2 * 1024 * 1024
             if member.file_size > limit:
                 raise RuntimeError('SBOM/coverage artifact exceeded bounds')
             entries[name] = member
@@ -249,6 +314,8 @@ def unpack_bom(data, destination, *, coverage_sources=None):
         (destination / 'bom.json').write_bytes(raw)
         if coverage_sources:
             validated_lcov(archive.read(entries['coverage/lcov.info']), destination, coverage_sources)
+        if python_sources:
+            validated_python_coverage(archive.read(entries['coverage/python.xml']), destination, python_sources)
 
 
 def unpack_android(data, destination, *, coverage_report=None):
@@ -367,10 +434,8 @@ def evaluate(profile, expected):
             unpack_android(data, work, coverage_report=profile.get('coverage_report'))
         else:
             unpack_source(source, work)
-            if profile.get('coverage_sources'):
-                unpack_bom(data, work, coverage_sources=profile['coverage_sources'])
-            else:
-                unpack_bom(data, work)
+            unpack_bom(data, work, coverage_sources=profile.get('coverage_sources'),
+                       python_sources=profile.get('python_sources'))
         settings = {'sonar.sources': profile['sources'], 'sonar.tests': 'ci',
             'sonar.test.inclusions': 'ci/test_*.py', 'sonar.exclusions': '**/__pycache__/**,ci/test_*.py',
             'sonar.sourceEncoding': 'UTF-8', 'sonar.scm.disabled': 'true', 'sonar.scm.revision': commit}

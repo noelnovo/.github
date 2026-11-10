@@ -103,10 +103,37 @@ def build(cfg, source):
     raw = result.stdout
     receipt = {**identity, 'bom_sha256': validate_bom(raw)}
     (out / 'bom.json').write_bytes(raw)
+    if cfg.get('coverage_sources') or cfg.get('python_sources'):
+        # Build/test executes ONLY here, without scanner/Vault credentials.
+        coverage_image = image + '-coverage'
+        container = 'security-coverage-' + str(int(os.environ['CI_JOB_ID']))
+        command('docker', 'build', '--target', 'security-coverage', '-t', coverage_image, '.', cwd=source)
+        command('docker', 'create', '--name', container, coverage_image, '/unused')
+        try:
+            for name in coverage_reports(cfg):
+                command('docker', 'cp', container + ':/' + name.rsplit('/', 1)[-1], str(out / name.rsplit('/', 1)[-1]))
+            receipt['coverage'] = coverage_receipt(cfg, out)
+        finally:
+            command('docker', 'rm', container)
     (out / 'receipt.json').write_text(json.dumps(receipt) + '\n')
     if candidate(cfg, source) != identity:
         raise RuntimeError('Candidate changed while building')
     print(json.dumps({'candidate_build_verified': identity, 'sbom_components': len(json.loads(raw)['components'])}))
+
+
+def coverage_reports(cfg):
+    return (['coverage/lcov.info'] if cfg.get('coverage_sources') else []) + (['coverage/python.xml'] if cfg.get('python_sources') else [])
+
+
+def coverage_receipt(cfg, out):
+    result = {}
+    for name in coverage_reports(cfg):
+        path = out / name.rsplit('/', 1)[-1]
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
+            raise RuntimeError('Invalid same-pipeline coverage artifact')
+        raw = path.read_bytes()
+        result[name] = {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw)}
+    return result
 
 
 def credentials(cfg):
@@ -159,7 +186,10 @@ def evaluate(cfg, source):
         if path.is_symlink() or not path.is_file() or path.stat().st_size > 16 * 1024 * 1024:
             raise RuntimeError('Invalid same-pipeline artifact')
     raw = (out / 'bom.json').read_bytes()
-    if json.loads((out / 'receipt.json').read_text()) != {**identity, 'bom_sha256': validate_bom(raw)}:
+    expected_receipt = {**identity, 'bom_sha256': validate_bom(raw)}
+    if coverage_reports(cfg):
+        expected_receipt['coverage'] = coverage_receipt(cfg, out)
+    if json.loads((out / 'receipt.json').read_text()) != expected_receipt:
         raise RuntimeError('Artifact candidate/pipeline/digest mismatch')
     # git archive does not execute build tools or source hooks. Never copy a
     # repository scanner configuration, source symlinks, or generated reports.
@@ -169,10 +199,15 @@ def evaluate(cfg, source):
         work = Path(directory)
         premerge.unpack_source(archive, work)
         (work / 'bom.json').write_bytes(raw)
+        if cfg.get('coverage_sources'):
+            premerge.validated_lcov((out / 'lcov.info').read_bytes(), work, cfg['coverage_sources'])
+        if cfg.get('python_sources'):
+            premerge.validated_python_coverage((out / 'python.xml').read_bytes(), work, cfg['python_sources'])
+        properties = ''.join(key + '=' + value + '\n' for key, value in cfg.get('sonar_properties', {}).items())
         (work / 'sonar-project.properties').write_text(
             'sonar.sources=' + cfg['sources'] + '\nsonar.tests=' + cfg['tests']
             + '\nsonar.sourceEncoding=UTF-8\nsonar.scm.disabled=true\nsonar.scm.revision='
-            + identity['head'] + '\n')
+            + identity['head'] + '\n' + properties)
         gate.ROOT = work
         for path in work.rglob('*'):
             path.chmod(0o755 if path.is_dir() else 0o644)
