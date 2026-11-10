@@ -113,7 +113,8 @@ def credentials(cfg):
     # The signed project/event/ref/job bounds are enforced by Vault. GitLab CE
     # external configs have null ci_config_sha; don't invent a workflow claim.
     return gate.request(VAULT + '/v1/auth/gitlab-ci/login', 'POST', {
-        'role': cfg['role'], 'jwt': os.environ['VAULT_ID_TOKEN']})['auth']['client_token']
+        'role': cfg['roles'][os.environ['CI_PIPELINE_SOURCE']],
+        'jwt': os.environ['VAULT_ID_TOKEN']})['auth']['client_token']
 
 
 def sonar(creds, work):

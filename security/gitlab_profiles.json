@@ -3,7 +3,10 @@
     "repository": "downops/prompt-gateway",
     "targets": ["main"],
     "instance": "instance-004",
-    "role": "security-ci-prompt-mr",
+    "roles": {
+      "merge_request_event": "security-ci-prompt-mr",
+      "push": "security-ci-prompt-push-generic"
+    },
     "sources": "app,Dockerfile",
     "tests": "tests"
   }
