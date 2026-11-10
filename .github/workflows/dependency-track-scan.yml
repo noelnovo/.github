@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: reusable-security-${{ github.repository_id }}-${{ github.event.pull_request.number }}
+  group: reusable-security-${{ github.repository_id }}-${{ github.event.pull_request.number || github.ref }}
   queue: max
   cancel-in-progress: false
 jobs:
@@ -17,20 +17,25 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      statuses: write
     outputs:
       candidate: ${{ steps.context.outputs.candidate }}
       hugo_baseurl: ${{ steps.context.outputs.hugo_baseurl }}
+      adapter: ${{ steps.context.outputs.adapter }}
+      reuse_android: ${{ steps.context.outputs.reuse_android }}
+      target: ${{ steps.context.outputs.target }}
+      analysis_group: ${{ steps.context.outputs.analysis_group }}
     steps:
       - uses: actions/checkout@v4
         with:
           repository: noelnovo/.github
-          ref: 932d5c69b89b8111a513bb45c97aa7726dc470b8
+          ref: d07320d44279f15bdeb50eb403118fd1f7442bda
           path: security-control
           persist-credentials: false
       - id: context
         run: python3 security-control/security/premerge.py context
         env:
-          SECURITY_CONTROL_SHA: 932d5c69b89b8111a513bb45c97aa7726dc470b8
+          SECURITY_CONTROL_SHA: d07320d44279f15bdeb50eb403118fd1f7442bda
           GITHUB_TOKEN: ${{ github.token }}
 
   build:
@@ -44,10 +49,12 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        if: needs.candidate.outputs.reuse_android != 'true'
         with:
           ref: ${{ needs.candidate.outputs.candidate }}
           persist-credentials: false
       - name: Build candidate without credentials
+        if: needs.candidate.outputs.adapter == 'image'
         env:
           SOURCE_CANDIDATE: ${{ needs.candidate.outputs.candidate }}
           HUGO_BASEURL: ${{ needs.candidate.outputs.hugo_baseurl }}
@@ -60,44 +67,83 @@ jobs:
             "${args[@]}" -t security-candidate:ci .
           docker save -o security-image.tar security-candidate:ci
       - name: Generate resolved runtime-image CycloneDX SBOM
+        if: needs.candidate.outputs.adapter == 'image'
         run: |
           docker run --rm --volume "$PWD:/work:ro" \
             anchore/syft@sha256:03215d0e98b661d0ecbc8575dbc14d65be1743b5de5df6410aecb7e80f95b060 \
             docker-archive:/work/security-image.tar -o cyclonedx-json > bom.json
+      - uses: actions/setup-java@v4
+        if: needs.candidate.outputs.adapter == 'android' && needs.candidate.outputs.reuse_android != 'true'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        if: needs.candidate.outputs.adapter == 'android' && needs.candidate.outputs.reuse_android != 'true'
+        with:
+          packages: platform-tools
+      - name: Compile Android candidate and resolve CycloneDX without credentials
+        if: needs.candidate.outputs.adapter == 'android' && needs.candidate.outputs.reuse_android != 'true'
+        env:
+          SOURCE_CANDIDATE: ${{ needs.candidate.outputs.candidate }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_CANDIDATE"
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+          python3 -m unittest discover -s tests/automation -p 'test_*.py'
+          python3 -m unittest discover -s ci -p 'test_*.py'
+          sh gradlew --no-daemon --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8' -Pkotlin.compiler.execution.strategy=in-process testDebugUnitTest cyclonedxBom
+      - name: Reuse the same-run Android validation build on protected pushes
+        if: needs.candidate.outputs.reuse_android == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: security-input-${{ needs.candidate.outputs.candidate }}-${{ github.run_attempt }}
       - uses: actions/upload-artifact@v4
+        if: needs.candidate.outputs.adapter == 'image'
         with:
           name: security-bom-${{ needs.candidate.outputs.candidate }}-${{ github.run_attempt }}
           path: bom.json
           if-no-files-found: error
           retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: needs.candidate.outputs.adapter == 'android'
+        with:
+          name: security-bom-${{ needs.candidate.outputs.candidate }}-${{ github.run_attempt }}
+          path: |
+            build/reports/cyclonedx/bom.json
+            app/build/intermediates/javac/**/classes/**
+            app/build/tmp/kotlin-classes/**
+            app/build/intermediates/built_in_kotlinc/**/classes/**
+          if-no-files-found: error
+          retention-days: 7
 
   quality-gate:
-    name: SonarQube + Dependency-Track (${{ github.base_ref }})
+    name: SonarQube + Dependency-Track (${{ github.base_ref || github.ref_name }})
     if: always()
     needs: [candidate, build]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     concurrency:
-      group: sonar-dtrack-analysis-${{ github.repository_id }}
+      group: ${{ needs.candidate.outputs.analysis_group || format('sonar-dtrack-analysis-{0}', github.repository_id) }}
       queue: max
       cancel-in-progress: false
     permissions:
       contents: read
       pull-requests: read
       actions: read
+      statuses: write
       id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
           # Literal reviewed code pin, never a caller-provided ref or PR script.
           repository: noelnovo/.github
-          ref: 932d5c69b89b8111a513bb45c97aa7726dc470b8
+          ref: d07320d44279f15bdeb50eb403118fd1f7442bda
           path: security-control
           persist-credentials: false
       - name: Evaluate updated Dependency-Track metrics through SonarQube
         run: python3 security-control/security/premerge.py gate
         env:
-          SECURITY_CONTROL_SHA: 932d5c69b89b8111a513bb45c97aa7726dc470b8
+          SECURITY_CONTROL_SHA: d07320d44279f15bdeb50eb403118fd1f7442bda
           SECURITY_BUILD_RESULT: ${{ needs.build.result }}
           SECURITY_CANDIDATE: ${{ needs.candidate.outputs.candidate }}
           GITHUB_TOKEN: ${{ github.token }}

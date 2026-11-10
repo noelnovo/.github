@@ -26,6 +26,7 @@ jobs:
       contents: read
       pull-requests: read
       actions: read
+      statuses: write # Trusted context/final jobs only; build remains contents-read.
       id-token: write
     uses: noelnovo/.github/.github/workflows/dependency-track-scan.yml@<reviewed-40-character-commit>
 ```
@@ -80,10 +81,27 @@ contract-test pin to that reviewed code commit; publish/test the workflow commit
 bind Vault to that exact workflow commit; then update the application's caller.
 A profile edit on `main` alone does not affect a previously pinned consumer.
 
-The current build adapter supports runtime OCI images with a Dockerfile. Other
-toolchains need a reviewed credential-free build adapter and corresponding SBOM
-validation—not arbitrary privileged caller commands. Registering a profile does
-not itself add an application caller or activate branch protection.
+Build adapters support runtime OCI images (Dockerfile + Syft) and Android
+(Temurin21, Android36, Gradle unit tests + resolved CycloneDX/compiled bytecode).
+Android protected push callers can reuse the same-run validation SBOM/classes
+instead of rebuilding. All build/artifact handling happens on the credential-free
+VM. The scanner VM accepts only bounded approved bytecode/BOM paths as data,
+ignores source build outputs/settings and never executes Gradle or artifacts.
+
+Android's profile preserves required commit statuses
+`security/sonarqube-dtrack-dev` and `security/sonarqube-dtrack-main` from trusted
+context/final jobs, with `wallettracker-security-analysis` serialization shared
+with the old producer during migration. The build job has no status-write or
+OIDC permission. Post-merge validation retains its plain `security` aggregate
+job so existing release-evidence checks still require successful security before
+signing; it does not change signing/publication permissions or approvals.
+
+This workflow version requires caller `statuses: write` for its trusted context
+and final jobs. Existing Portfolio/Blog callers pinned to the earlier version
+keep their existing permissions unchanged; upgrading a consumer requires review
+of its workflow pin, Vault claim and permissions together. Other toolchains need
+a reviewed credential-free adapter, never privileged caller commands. Registering
+a profile does not itself add a caller or activate/change branch protection.
 
 ## Migration from the earlier generic uploader
 
