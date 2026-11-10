@@ -2,7 +2,7 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-CODE_PIN = 'd07320d44279f15bdeb50eb403118fd1f7442bda'
+CODE_PIN = 'e254078ff2ae582aa42842bc0f1017519cce8579'
 
 
 class WorkflowContractTests(unittest.TestCase):
@@ -50,6 +50,14 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('security-input-${{ needs.candidate.outputs.candidate }}', build)
         self.assertNotIn('statuses: write', build)
         for value in ['sdkmanager', 'gradlew', 'setup-java', 'download-artifact']:
+            self.assertNotIn(value, gate)
+
+    def test_coverage_is_exported_in_builder_and_scanned_as_data_only(self):
+        build = self.workflow.split('\n  build:\n', 1)[1].split('\n  quality-gate:\n', 1)[0]
+        gate = self.workflow.split('\n  quality-gate:\n', 1)[1]
+        self.assertIn('--target security-coverage --output type=local,dest=coverage', build)
+        self.assertIn('coverage/lcov.info', build)
+        for value in ['npm ', 'node --test', 'docker build', 'npx ', 'c8 ']:
             self.assertNotIn(value, gate)
 
 
