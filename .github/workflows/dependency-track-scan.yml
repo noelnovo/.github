@@ -30,13 +30,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: noelnovo/.github
-          ref: 2bb463725c5100d403280a801e1a428a746be453
+          ref: 55e51eba0db3851786f8928f6eafde1ac2b232fb
           path: security-control
           persist-credentials: false
       - id: context
         run: python3 security-control/security/premerge.py context
         env:
-          SECURITY_CONTROL_SHA: 2bb463725c5100d403280a801e1a428a746be453
+          SECURITY_CONTROL_SHA: 55e51eba0db3851786f8928f6eafde1ac2b232fb
           GITHUB_TOKEN: ${{ github.token }}
 
   build:
@@ -145,13 +145,13 @@ jobs:
         with:
           # Literal reviewed code pin, never a caller-provided ref or PR script.
           repository: noelnovo/.github
-          ref: 2bb463725c5100d403280a801e1a428a746be453
+          ref: 55e51eba0db3851786f8928f6eafde1ac2b232fb
           path: security-control
           persist-credentials: false
       - name: Evaluate updated Dependency-Track metrics through SonarQube
         run: python3 security-control/security/premerge.py gate
         env:
-          SECURITY_CONTROL_SHA: 2bb463725c5100d403280a801e1a428a746be453
+          SECURITY_CONTROL_SHA: 55e51eba0db3851786f8928f6eafde1ac2b232fb
           SECURITY_BUILD_RESULT: ${{ needs.build.result }}
           SECURITY_CANDIDATE: ${{ needs.candidate.outputs.candidate }}
           GITHUB_TOKEN: ${{ github.token }}

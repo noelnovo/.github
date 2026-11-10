@@ -12,7 +12,7 @@
     DOCKER_TLS_CERTDIR: ""
     DOCKER_TLS_VERIFY: ""
     DOCKER_CERT_PATH: ""
-    SECURITY_CONTROL_SHA: de81cdf477c491a5adac5b80f3bfee626fdf5b02
+    SECURITY_CONTROL_SHA: 55e51eba0db3851786f8928f6eafde1ac2b232fb
   before_script:
     - apk add --no-cache python3 git >/dev/null
     - |

@@ -2,7 +2,7 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-CODE_PIN = '2bb463725c5100d403280a801e1a428a746be453'
+CODE_PIN = '55e51eba0db3851786f8928f6eafde1ac2b232fb'
 
 
 class WorkflowContractTests(unittest.TestCase):
