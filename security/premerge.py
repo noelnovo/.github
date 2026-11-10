@@ -251,9 +251,9 @@ def unpack_bom(data, destination, *, coverage_sources=None):
             validated_lcov(archive.read(entries['coverage/lcov.info']), destination, coverage_sources)
 
 
-def unpack_android(data, destination):
-    """Bytecode is scanner data only. No Gradle/JAR/script executes here."""
-    total, classes, sbom = 0, 0, False
+def unpack_android(data, destination, *, coverage_report=None):
+    """Bytecode and coverage XML are scanner data only. No Gradle/JAR/script executes here."""
+    total, classes, sbom, coverage = 0, 0, False, False
     seen = set()
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         if len(archive.infolist()) > 20000:
@@ -267,14 +267,15 @@ def unpack_android(data, destination):
                 continue
             name = str(path)
             is_bom = name == 'build/reports/cyclonedx/bom.json'
-            allowed = is_bom or (name.startswith(('app/build/intermediates/javac/',
+            is_coverage = name == coverage_report if coverage_report else False
+            allowed = is_bom or is_coverage or (name.startswith(('app/build/intermediates/javac/',
                 'app/build/tmp/kotlin-classes/', 'app/build/intermediates/built_in_kotlinc/'))
                 and name.endswith(('.class', '.jar', '.kotlin_module')))
             if not allowed or name in seen:
                 raise RuntimeError('Unexpected or duplicate Android artifact path')
             seen.add(name)
             total += member.file_size
-            if total > MAX_EXPANDED or (is_bom and member.file_size > 16 * 1024 * 1024):
+            if total > MAX_EXPANDED or ((is_bom or is_coverage) and member.file_size > 16 * 1024 * 1024):
                 raise RuntimeError('Android artifact expansion exceeded bounds')
             raw = archive.read(member)
             if is_bom:
@@ -283,14 +284,22 @@ def unpack_android(data, destination):
                     raise RuntimeError('Resolved Android CycloneDX required')
                 (destination / 'bom.json').write_bytes(raw)
                 sbom = True
+            elif is_coverage:
+                if not raw.lstrip().startswith(b'<?xml') or b'<coverage' not in raw:
+                    raise RuntimeError('Resolved Android coverage XML required')
+                target = destination.joinpath(*path.parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(raw)
+                target.chmod(0o600)
+                coverage = True
             else:
                 target = destination.joinpath(*path.parts)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(raw)
                 target.chmod(0o600)
                 classes += name.endswith('.class')
-    if not classes or not sbom:
-        raise RuntimeError('Android SBOM and compiled classes required')
+    if not classes or not sbom or (coverage_report and not coverage):
+        raise RuntimeError('Android SBOM, compiled classes and coverage report required')
 
 
 def artifact(profile, commit):
@@ -332,7 +341,8 @@ def context(profile, expected):
         output.write('reuse_android=' + str(profile.get('adapter') == 'android' and expected.get('event') == 'push').lower() + '\n')
         output.write('target=' + expected['target'] + '\n')
         output.write('analysis_group=' + profile.get('analysis_group', 'sonar-dtrack-analysis-' + profile['repository_id']) + '\n')
-        output.write('coverage_format=' + ('lcov' if profile.get('coverage_sources') else 'none') + '\n')
+        output.write('coverage_format=' + ('jacoco' if profile.get('coverage_report')
+            else ('lcov' if profile.get('coverage_sources') else 'none')) + '\n')
     print(json.dumps({'candidate_verified': True, 'candidate': commit, 'target': expected['target']}))
 
 
@@ -354,7 +364,7 @@ def evaluate(profile, expected):
         work = Path(directory)
         if profile.get('adapter') == 'android':
             unpack_source(source, work, android=True)
-            unpack_android(data, work)
+            unpack_android(data, work, coverage_report=profile.get('coverage_report'))
         else:
             unpack_source(source, work)
             if profile.get('coverage_sources'):
