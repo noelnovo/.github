@@ -1,0 +1,23 @@
+{
+  "864547743": {
+    "repository": "noelnovo/nn-PortFolio",
+    "repository_id": "864547743",
+    "targets": ["main"],
+    "instance": "instance-002",
+    "role": "security-ci-portfolio-pr-reusable",
+    "sources": "src,ci,Dockerfile",
+    "build_args": {}
+  },
+  "1406330066": {
+    "repository": "noelnovo/dev-blog",
+    "repository_id": "1406330066",
+    "targets": ["dev", "main"],
+    "instance": "instance-003",
+    "role": "security-ci-blog-pr-reusable",
+    "sources": "assets,layouts,ci,Dockerfile",
+    "build_args": {
+      "dev": {"HUGO_BASEURL": "https://blog.int.downops.win/"},
+      "main": {"HUGO_BASEURL": "https://blog.noelnovo.dev/"}
+    }
+  }
+}
