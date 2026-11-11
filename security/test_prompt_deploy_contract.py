@@ -33,7 +33,8 @@ class PromptDeployContractTests(unittest.TestCase):
         self.assertIn('ref: ' + self.fixture['ref'], self.prefix)
         self.assertIn('needs: [security]', self.prefix)
         scanner = (ROOT / 'gitlab/dependency-track-scan.yml').read_text()
-        self.assertIn('SECURITY_CONTROL_SHA: 55e51eba0db3851786f8928f6eafde1ac2b232fb', scanner)
+        override = self.source.split('\n.security-control:\n', 1)[1]
+        self.assertIn('SECURITY_CONTROL_SHA: 55e51eba0db3851786f8928f6eafde1ac2b232fb', override)
         self.assertNotIn('VAULT_GITOPS_ID_TOKEN', scanner)
 
     def test_effective_deploy_replaces_legacy_commands_and_tooling(self):
