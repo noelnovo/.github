@@ -24,6 +24,66 @@ external entrypoint. Existing GitHub callers and Prompt's immutable pins remain
 unchanged. Passing unit tests alone is not proof of actual Android CI/Vault/quality
 gate acceptance or release publication.
 
+## Prompt GitLab deploy override
+
+`gitlab/prompt-gateway.yml` still includes the frozen Prompt delivery configuration
+at `86e1cc1320389b5d0aa7ab92259daf87f2e15e61`. Its explicit `deploy` override replaces
+the inherited image/before-script/script/rules, not the unused application-root
+stub. Other jobs and scanner controller `55e51eba...` are unchanged.
+
+The existing deploy job uses Python plus Git tooling, no application checkout,
+services or producer artifacts. Only that job declares `VAULT_GITOPS_ID_TOKEN`
+with audience `https://vault.downops.win/prompt-gitops`. The helper logs into
+`auth/gitlab-ci` as `security-ci-prompt-deploy`, reads only
+`downops/services/gitlab/gitops/instance-010`, and immediately revokes the short
+Vault service token before Git work. The retained legacy `GITOPS_PUSH_TOKEN` is
+explicitly removed and never a fallback. Git receives the Vault-fetched password
+only through a child environment/ephemeral credential helper: no password URL,
+argv value, credential file or stored helper result. Read errors preserve their
+primary category if revocation also fails; standalone revocation failure blocks
+deployment.
+`vault_login_ok` means the returned lease passed the exact policy/type/TTL checks,
+not merely that HTTP returned an auth object. Short, malformed or unsafe returned
+client tokens are never used in further HTTP headers; only validated safe lease
+strings are revoked, including safe leases whose authority is rejected.
+
+Signed project/namespace/ref/push claims and the dedicated audience restrict the
+reader. GitLab has no job-name or signed external-config-SHA bound claim here.
+Deploy-only token declaration, immutable CI review and trusted Maintainers remain
+part of the boundary, not cryptographic per-job isolation. MR/scanner/runtime
+policies must not gain the GitOps record.
+
+Git works with objects and a private index, not application scripts or checkout
+filters/hooks. Exactly one regular canonical `k8s/app.yaml` image field must be
+valid and become `registry.int.downops.win/downops/prompt-gateway:` followed by
+`<stable-VERSION>-<8-character-source-SHA>`. Missing/legacy/malformed/duplicate
+targets fail before idempotent success. Changed application source rejects stale
+publication; a manifest-only descendant is accepted only if it already has this
+source's desired tag. Pushes are normal fast-forward operations with at most
+three fresh-guarded attempts, never force pushes.
+Only after verified writeback/already-desired state, the helper notifies the
+existing private Argo refresh-only hook with the actual SSH repository/main ref.
+It never syncs or patches a workload. A failed refresh fails the job while keeping
+the successful writeback revision in safe metadata; webhook200 alone is not Ready.
+
+An unresolved `REVIEWED_C2_SHA_REQUIRED` sentinel must block activation. Parent first
+reviews/publishes helper commit C2, then replaces the sentinel with that exact
+40-character commit and publishes wrapper W2. Only project10's external CI pin
+then moves to W2 under approval; existing GitHub callers and scanner CODE55 stay
+unchanged. VaultOps STAGED metadata is not actual OIDC/delivery proof. Keep the
+old CI variable until real injection and exact GitOps/Ready rollout are verified.
+Publication alone does not activate the flow: project10 must select the reviewed
+W2 pin and actual authenticated injection/writeback/delivery must be proved.
+The C2 review includes the inactive prepared wrapper and its contract tests;
+do not activate that sentinel-bearing wrapper. W2 is the subsequent resolved-pin
+revision, avoiding a self-referencing helper commit hash.
+Next use a meaningful Prompt documentation repair MR, full current-head gates,
+and a normal MAIN merge/push. No manual deployment-only pipeline or forged source.
+
+Offline tests cover synthetic Vault failures, no legacy fallback, primary-error
+preservation, manifest guards, stale/racing pushes and the actual wrapper override.
+No live JWT, GitLab push, tooling-image qualification or rollout is claimed by them.
+
 `.github/workflows/dependency-track-scan.yml` is the single reusable security
 entrypoint. It builds the exact PR merge candidate without credentials, generates
 a runtime-image CycloneDX SBOM, waits for Dependency-Track, and evaluates the

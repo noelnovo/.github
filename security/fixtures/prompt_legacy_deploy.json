@@ -1,0 +1,18 @@
+{
+  "project": "downops/prompt-gateway",
+  "ref": "86e1cc1320389b5d0aa7ab92259daf87f2e15e61",
+  "file": "/.gitlab-ci.yml",
+  "git_blob_sha": "5d22e3f6c317b1fc5856d2311a1e272841db845b",
+  "deploy_section_sha256": "b393000b7fdaa27e7c2bb3f1fbe179ac5dc7d6c5ef1f770f4effc346985c06f3",
+  "wrapper_before_sha256": "1b47f43e5356b280b0e4b4d9fa064f86d9c776f4c185b1db629a02904abe846f",
+  "note": "Actual frozen deploy field structure; legacy commands/rules are inert hash sentinels, never copied or executed. Live merged-CI lint remains a release check.",
+  "deploy": {
+    "stage": "deploy",
+    "image": {"name": "alpine/git:v2.54.0", "entrypoint": [""]},
+    "variables": {},
+    "needs": ["build"],
+    "rules": ["INERT_LEGACY_RULES"],
+    "before_script": ["INERT_LEGACY_BEFORE_SCRIPT"],
+    "script": ["INERT_LEGACY_SCRIPT"]
+  }
+}
