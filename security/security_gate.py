@@ -2,10 +2,13 @@
 import base64
 from decimal import Decimal
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
 import subprocess
+import socket
+import ssl
 import sys
 import time
 import urllib.error
@@ -23,6 +26,25 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class PrivateServiceHTTPS(urllib.request.HTTPSHandler):
+    """Route only the two registered private services; stdlib owns verified TLS."""
+    def __init__(self):
+        super().__init__(context=ssl.create_default_context(ssl.Purpose.SERVER_AUTH))
+
+    @staticmethod
+    def connection(host, **kwargs):
+        connection = http.client.HTTPSConnection(host, **kwargs)
+        address = os.environ.get('INTERNAL_PROXY_ADDRESS')
+        if address and connection.host in ['gitlab.int.downops.win', 'vault.int.downops.win']:
+            def routed_socket(destination, timeout=60, source_address=None):
+                return socket.create_connection((address, destination[1]), timeout, source_address)
+            connection._create_connection = routed_socket
+        return connection
+
+    def https_open(self, request):
+        return self.do_open(self.connection, request, context=self._context)
+
+
 def request(url, method='GET', data=None, headers=None, *, form=False):
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != 'https' or parsed.username or parsed.password:
@@ -31,14 +53,23 @@ def request(url, method='GET', data=None, headers=None, *, form=False):
         data=None if data is None else (urllib.parse.urlencode(data).encode() if form else json.dumps(data).encode()),
         headers={'Content-Type': 'application/x-www-form-urlencoded' if form else 'application/json',
                  'User-Agent': 'Mozilla/5.0 DownOps-Security-CI', **(headers or {})})
-    try:
-        with urllib.request.build_opener(NoRedirect()).open(req, timeout=60) as response:
-            raw = response.read()
-            return json.loads(raw) if raw else {}
-    except urllib.error.HTTPError as error:
-        raise RuntimeError('Security service rejected request: HTTP ' + str(error.code)) from None
-    except (urllib.error.URLError, ValueError):
-        raise RuntimeError('Security service unavailable or invalid response') from None
+    for attempt in range(3):
+        try:
+            with urllib.request.build_opener(NoRedirect(), PrivateServiceHTTPS()).open(req, timeout=60) as response:
+                raw = response.read()
+                return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as error:
+            if error.code not in [408, 429, 502, 503, 504] or attempt == 2:
+                raise RuntimeError('Security service rejected request: HTTP ' + str(error.code)) from None
+        except (urllib.error.URLError, OSError, ValueError) as error:
+            reason = getattr(error, 'reason', error)
+            if isinstance(reason, ssl.SSLCertVerificationError):
+                raise RuntimeError('Security service certificate verification failed') from None
+            if attempt == 2:
+                raise RuntimeError('Security service unavailable or invalid response: ' + parsed.hostname) from None
+            print(json.dumps({'service_retry_host': parsed.hostname, 'attempt': attempt + 1,
+                              'failure_type': type(reason).__name__}))
+        time.sleep(attempt + 1)
 
 
 def config():
