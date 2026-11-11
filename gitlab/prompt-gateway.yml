@@ -35,3 +35,51 @@ security-build:
 
 build:
   needs: [security]
+
+# PREPARATION ONLY: parent resolves C2 before publishing distinct wrapper W2.
+deploy:
+  image:
+    name: python:3.12-alpine
+    entrypoint: [""]
+  stage: deploy
+  services: []
+  needs:
+    - job: build
+      artifacts: false
+  variables:
+    GIT_STRATEGY: none
+    PROMPT_DEPLOY_CODE: REVIEWED_C2_SHA_REQUIRED
+  id_tokens:
+    VAULT_GITOPS_ID_TOKEN:
+      aud: https://vault.downops.win/prompt-gitops
+  only: null
+  except: null
+  rules:
+    - if: '$VAULT_RENEW_ONLY == "1"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main" && $CI_COMMIT_REF_PROTECTED == "true"'
+  before_script:
+    - |
+      set -eu
+      set +x
+      ulimit -c 0
+      unset GITOPS_PUSH_TOKEN
+      unset GIT_TRACE GIT_TRACE_PACKET GIT_TRACE_CURL GIT_CURL_VERBOSE
+      unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_EXEC_PATH GIT_ASKPASS SSH_ASKPASS
+      export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_LFS_SKIP_SMUDGE=1
+      case "$PROMPT_DEPLOY_CODE" in
+        ''|*[!0-9a-f]*) echo 'reviewed deploy C2 pin required' >&2; exit 1 ;;
+      esac
+      test "${#PROMPT_DEPLOY_CODE}" -eq 40
+      apk add --no-cache git ca-certificates >/dev/null
+      export PROMPT_DEPLOY_CONTROL_DIR="$(mktemp -d)"
+      trap 'rm -rf "$PROMPT_DEPLOY_CONTROL_DIR"' EXIT HUP INT TERM
+      control_git() {
+        env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$PROMPT_DEPLOY_CONTROL_DIR" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_LFS_SKIP_SMUDGE=1 git -c credential.helper= -c core.hooksPath=/dev/null -c core.fsmonitor=false -c init.templateDir= -c http.sslVerify=true -c http.followRedirects=false -C "$PROMPT_DEPLOY_CONTROL_DIR" "$@"
+      }
+      control_git init -q
+      control_git fetch -q --depth=1 https://github.com/noelnovo/.github.git "$PROMPT_DEPLOY_CODE"
+      control_git checkout -q --detach FETCH_HEAD
+      test "$(control_git rev-parse HEAD)" = "$PROMPT_DEPLOY_CODE"
+  script:
+    - python3 -I -u "$PROMPT_DEPLOY_CONTROL_DIR/security/prompt_deploy.py"
