@@ -11,8 +11,16 @@
     "sources": "app/src/main,ci,scripts",
     "tests": "app/src/test,tests",
     "coverage_report": "app/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml",
+    "python_sources": [
+      "ci/release_publish.py", "ci/setup_android.py", "ci/vault_access.py",
+      "scripts/build/build_dev.py", "scripts/build/build_prod.py",
+      "scripts/ci/package_validated_apk.py", "scripts/ci/release_validation.py", "scripts/ci/verify_contract.py",
+      "scripts/release/check_prod.py", "scripts/release/check_publication.py", "scripts/release/publish_prod.py",
+      "scripts/shared/github_identity.py", "scripts/shared/validated_apk.py"
+    ],
     "sonar_properties": {
       "sonar.java.binaries": "app/build",
+      "sonar.python.coverage.reportPaths": "coverage/python.xml",
       "sonar.exclusions": "**/__pycache__/**,ci/test_*.py",
       "sonar.coverage.jacoco.xmlReportPaths": "app/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml",
       "sonar.coverage.exclusions": "app/src/main/java/win/downops/wallettracker/ui/**,app/src/main/java/win/downops/wallettracker/MainActivity.kt,app/src/main/java/win/downops/wallettracker/v2/WalletActivity.kt,app/src/main/java/win/downops/wallettracker/v2/BillEditor.kt,app/src/main/java/win/downops/wallettracker/v2/WalletDesign.kt,app/src/main/java/win/downops/wallettracker/v2/DeviceVault.kt,app/src/main/java/win/downops/wallettracker/v2/FinanceStore.kt,app/src/main/java/win/downops/wallettracker/v2/WalletModel.kt,app/src/main/java/win/downops/wallettracker/v2/LegacyUpgrade.kt,app/src/main/java/win/downops/wallettracker/v2/FinanceApi.kt,app/src/main/java/win/downops/wallettracker/util/**,app/src/main/java/win/downops/wallettracker/WalletTrackerApplication.kt"

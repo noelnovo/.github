@@ -153,6 +153,9 @@ def collect_android(cfg, source, out, identity):
     (out / 'bom.json').write_bytes(bom)
     receipt = {**identity, 'bom_sha256': validate_bom(bom),
                'android_sha256': hashlib.sha256(raw).hexdigest()}
+    if cfg.get('python_sources'):
+        (out / 'python.xml').write_bytes((source / 'coverage/python.xml').read_bytes())
+        receipt['coverage'] = coverage_receipt(cfg, out)
     (out / 'receipt.json').write_text(json.dumps(receipt) + '\n')
     if candidate(cfg, source) != identity:
         raise RuntimeError('Candidate changed while collecting Android data')
