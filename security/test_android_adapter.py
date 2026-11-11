@@ -35,6 +35,16 @@ GOOD = [('build/reports/cyclonedx/bom.json', '{"bomFormat":"CycloneDX","componen
 
 
 class AndroidAdapterTests(unittest.TestCase):
+    def test_jacoco_report_root_is_accepted_but_entities_are_rejected(self):
+        report = 'app/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml'
+        with tempfile.TemporaryDirectory() as directory:
+            control.unpack_android(archive(GOOD + [(report, '<?xml version="1.0"?><report name="app"/>')]),
+                                   Path(directory), coverage_report=report)
+        for raw in ['<?xml version="1.0"?><unrelated/>',
+                    '<?xml version="1.0"?><!DOCTYPE report [<!ENTITY x "y">]><report/>']:
+            with tempfile.TemporaryDirectory() as directory, self.assertRaises(RuntimeError):
+                control.unpack_android(archive(GOOD + [(report, raw)]), Path(directory), coverage_report=report)
+
     def test_profile_is_scoped_and_reuses_existing_instance(self):
         profile, expected = control.identity(event(), ENV)
         self.assertEqual(profile['adapter'], 'android')

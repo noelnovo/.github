@@ -18,6 +18,32 @@ class GitLabGateTests(unittest.TestCase):
     def test_registered_mr(self):
         self.assertEqual(subject.profile(self.env())['instance'], 'instance-004')
 
+    def test_registered_android_has_separate_scan_roles(self):
+        env = self.env()
+        env.update(CI_PROJECT_ID='31', CI_PROJECT_PATH='downops/wallet-tracker-android')
+        cfg = subject.profile(env)
+        self.assertEqual(cfg['adapter'], 'android')
+        self.assertNotEqual(cfg['roles']['push'], cfg['roles']['merge_request_event'])
+        self.assertEqual(cfg['instance'], 'instance-005')
+
+    def test_android_tag_must_match_current_main(self):
+        env = self.env()
+        env.update(CI_PROJECT_ID='31', CI_PROJECT_PATH='downops/wallet-tracker-android',
+                   CI_PIPELINE_SOURCE='push', CI_COMMIT_REF_PROTECTED='true', CI_COMMIT_TAG='v3.2.0')
+        cfg = subject.profile(env)
+        with patch.dict(os.environ, env, clear=True), patch.object(subject, 'command',
+                side_effect=['a'*40, 'b'*40+' refs/heads/main', '']):
+            with self.assertRaises(RuntimeError):subject.candidate(cfg, Path('/source'))
+
+    def test_missing_android_archive_fails_before_credentials(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); out = root/'security-output'; out.mkdir()
+            raw = b'{"bomFormat":"CycloneDX","components":[{"name":"example"}]}'
+            (out/'bom.json').write_bytes(raw); (out/'receipt.json').write_text('{}')
+            with patch.object(subject, 'candidate', return_value={}), patch.object(subject, 'credentials') as login:
+                with self.assertRaises(RuntimeError):subject.evaluate({'adapter':'android'}, root)
+                login.assert_not_called()
+
     def test_reject_other_project(self):
         env = self.env(); env['CI_PROJECT_ID'] = '31'
         with self.assertRaises(RuntimeError):subject.profile(env)

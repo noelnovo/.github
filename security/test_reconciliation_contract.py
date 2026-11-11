@@ -37,7 +37,7 @@ class ReconciliationContractTests(unittest.TestCase):
     def test_android_unpack_and_dispatch_are_preserved(self):
         functions = {n.name: n for n in self.tree.body if isinstance(n, ast.FunctionDef)}
         self.assertEqual(digest(ast.get_source_segment(self.code, functions['unpack_android'])),
-                         '2b6c78a78b91103a3b97b32b10a0304d0c64dd9e4cf7ed1c3a8b48eeabe76598')
+                         'fb4d96fe6dc909ceecd9d97946d84c39f3770110d1582c57236ae1296de18f8c')
         self.assertEqual(digest(ast.get_source_segment(self.code, functions['context'])),
                          'ee09a57eadb9e6a3f2352b6cea9444c5cac4bf02bead1715578b4ffc64e93340')
         calls = [node for node in ast.walk(self.tree) if isinstance(node, ast.Call)

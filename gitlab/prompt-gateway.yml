@@ -83,3 +83,9 @@ deploy:
       test "$(control_git rev-parse HEAD)" = "$PROMPT_DEPLOY_CODE"
   script:
     - python3 -I -u "$PROMPT_DEPLOY_CONTROL_DIR/security/prompt_deploy.py"
+
+# Keep the separately reviewed Prompt scanner unchanged when the generic
+# entrypoint gains new Android profiles/transport. Consumer upgrades are explicit.
+.security-control:
+  variables:
+    SECURITY_CONTROL_SHA: 55e51eba0db3851786f8928f6eafde1ac2b232fb

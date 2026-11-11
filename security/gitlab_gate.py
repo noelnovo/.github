@@ -4,6 +4,7 @@ The existing privileged/shared executor is an owner-accepted trust boundary,
 NOT an isolation boundary. External CI configuration is controlled by Maintainers.
 """
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.parse
+import zipfile
 
 import premerge
 import security_gate as gate
@@ -59,7 +61,7 @@ def candidate(cfg, source):
                 or str(mr['target_project_id']) != env['CI_PROJECT_ID']):
             raise RuntimeError('MR source/target changed')
     else:
-        target = env['CI_COMMIT_BRANCH']
+        target = 'main' if env.get('CI_COMMIT_TAG') and cfg.get('adapter') == 'android' else env['CI_COMMIT_BRANCH']
     if target not in cfg['targets']:
         raise RuntimeError('Unregistered target')
     remote = command('git', 'ls-remote', 'origin', 'refs/heads/' + target, cwd=source).split()
@@ -71,6 +73,10 @@ def candidate(cfg, source):
         command('git', 'merge-base', '--is-ancestor', base, head, cwd=source)
     elif base != head:
         raise RuntimeError('Protected push is stale')
+    if env.get('CI_COMMIT_TAG'):
+        import re
+        if not re.fullmatch(r'v\d+\.\d+\.\d+', env['CI_COMMIT_TAG']):
+            raise RuntimeError('Invalid production tag')
     return {'project': env['CI_PROJECT_ID'], 'pipeline': env['CI_PIPELINE_ID'],
             'event': env['CI_PIPELINE_SOURCE'], 'head': head, 'base': base, 'target': target}
 
@@ -90,6 +96,9 @@ def build(cfg, source):
     if out.exists():
         raise RuntimeError('Unexpected preexisting security artifacts')
     out.mkdir()
+    if cfg.get('adapter') == 'android':
+        collect_android(cfg, source, out, identity)
+        return
     image = 'security-candidate:' + str(int(os.environ['CI_JOB_ID']))
     command('docker', 'build', '--label', 'org.opencontainers.image.revision=' + identity['head'],
             '-t', image, '.', cwd=source)
@@ -119,6 +128,38 @@ def build(cfg, source):
     if candidate(cfg, source) != identity:
         raise RuntimeError('Candidate changed while building')
     print(json.dumps({'candidate_build_verified': identity, 'sbom_components': len(json.loads(raw)['components'])}))
+
+
+def collect_android(cfg, source, out, identity):
+    """Collect same-pipeline producer data without giving Gradle scanner credentials."""
+    names = ['build/reports/cyclonedx/bom.json', cfg['coverage_report']]
+    for prefix in ['app/build/intermediates/javac', 'app/build/tmp/kotlin-classes',
+                   'app/build/intermediates/built_in_kotlinc']:
+        names.extend(str(path.relative_to(source)) for path in (source / prefix).rglob('*.class'))
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        for name in sorted(set(names)):
+            path = source / name
+            if path.is_symlink() or not path.is_file():
+                raise RuntimeError('Missing or unsafe Android producer data')
+            archive.write(path, name)
+    raw = buffer.getvalue()
+    if len(raw) > premerge.MAX_DOWNLOAD:
+        raise RuntimeError('Android artifact exceeds bounds')
+    with tempfile.TemporaryDirectory() as directory:
+        premerge.unpack_android(raw, Path(directory), coverage_report=cfg['coverage_report'])
+    bom = (source / names[0]).read_bytes()
+    (out / 'android.zip').write_bytes(raw)
+    (out / 'bom.json').write_bytes(bom)
+    receipt = {**identity, 'bom_sha256': validate_bom(bom),
+               'android_sha256': hashlib.sha256(raw).hexdigest()}
+    if cfg.get('python_sources'):
+        (out / 'python.xml').write_bytes((source / 'coverage/python.xml').read_bytes())
+        receipt['coverage'] = coverage_receipt(cfg, out)
+    (out / 'receipt.json').write_text(json.dumps(receipt) + '\n')
+    if candidate(cfg, source) != identity:
+        raise RuntimeError('Candidate changed while collecting Android data')
+    print(json.dumps({'android_producer_data_verified': True, 'candidate': identity}))
 
 
 def coverage_reports(cfg):
@@ -187,6 +228,13 @@ def evaluate(cfg, source):
             raise RuntimeError('Invalid same-pipeline artifact')
     raw = (out / 'bom.json').read_bytes()
     expected_receipt = {**identity, 'bom_sha256': validate_bom(raw)}
+    android_data = None
+    if cfg.get('adapter') == 'android':
+        path = out / 'android.zip'
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > premerge.MAX_DOWNLOAD:
+            raise RuntimeError('Invalid Android artifact')
+        android_data = path.read_bytes()
+        expected_receipt['android_sha256'] = hashlib.sha256(android_data).hexdigest()
     if coverage_reports(cfg):
         expected_receipt['coverage'] = coverage_receipt(cfg, out)
     if json.loads((out / 'receipt.json').read_text()) != expected_receipt:
@@ -197,8 +245,12 @@ def evaluate(cfg, source):
         cwd=source, capture_output=True, check=True, timeout=60).stdout
     with tempfile.TemporaryDirectory(prefix='gitlab-security-') as directory:
         work = Path(directory)
-        premerge.unpack_source(archive, work)
+        premerge.unpack_source(archive, work, android=android_data is not None)
         (work / 'bom.json').write_bytes(raw)
+        if android_data is not None:
+            premerge.unpack_android(android_data, work, coverage_report=cfg['coverage_report'])
+            if (work / 'bom.json').read_bytes() != raw:
+                raise RuntimeError('Android SBOM differs from receipt')
         if cfg.get('coverage_sources'):
             premerge.validated_lcov((out / 'lcov.info').read_bytes(), work, cfg['coverage_sources'])
         if cfg.get('python_sources'):
