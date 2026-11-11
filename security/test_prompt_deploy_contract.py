@@ -7,6 +7,7 @@ import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+DEPLOY_CODE_PIN = '669c88c24c87de0bc4d110f652edd7a5c17da4e9'
 
 
 def block(body, key):
@@ -76,7 +77,7 @@ class PromptDeployContractTests(unittest.TestCase):
 
     def test_unresolved_pin_blocks_activation_before_network(self):
         # Parent resolves the literal only after committing reviewed helper C2.
-        self.assertRegex(block(self.body, 'variables')[1], r'PROMPT_DEPLOY_CODE: (?:REVIEWED_C2_SHA_REQUIRED|[0-9a-f]{40})\n')
+        self.assertIn('PROMPT_DEPLOY_CODE: ' + DEPLOY_CODE_PIN + '\n', block(self.body, 'variables')[1])
         guard = self.bootstrap.split('      apk add', 1)[0] if '      apk add' in self.bootstrap else self.bootstrap.split('apk add', 1)[0]
         env = {'PATH': '/usr/bin:/bin', 'PROMPT_DEPLOY_CODE': 'REVIEWED_C2_SHA_REQUIRED'}
         result = subprocess.run(['/bin/sh', '-c', guard], env=env, capture_output=True, timeout=5)

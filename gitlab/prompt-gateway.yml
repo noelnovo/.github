@@ -48,7 +48,7 @@ deploy:
       artifacts: false
   variables:
     GIT_STRATEGY: none
-    PROMPT_DEPLOY_CODE: REVIEWED_C2_SHA_REQUIRED
+    PROMPT_DEPLOY_CODE: 669c88c24c87de0bc4d110f652edd7a5c17da4e9
   id_tokens:
     VAULT_GITOPS_ID_TOKEN:
       aud: https://vault.downops.win/prompt-gitops
